@@ -14,7 +14,7 @@ works if:
 
 - **Backward compatibility** — new code can read old data.
 - **Forward compatibility** — old code can read (or at least tolerate)
-  new data, usually by ignoring unknown fields.
+ new data, usually by ignoring unknown fields.
 
 Every encoding format either helps you here or sets a trap.
 
@@ -38,12 +38,12 @@ schemaless.
 **Protocol Buffers, Thrift, Avro:** schema-driven binary.
 
 - **Protobuf / Thrift:** field numbers. Add optional fields with new
-  numbers; old readers skip unknown numbers. Do not change types in
-  place. Generated code in many languages. gRPC rides on Protobuf.
+ numbers; old readers skip unknown numbers. Do not change types in
+ place. Generated code in many languages. gRPC rides on Protobuf.
 - **Avro:** schema on write, often with a **schema registry**. Especially
-  at home in Hadoop/Kafka land. Writer schema + reader schema are
-  resolved against each other; that resolution *is* the compatibility
-  story.
+ at home in Hadoop/Kafka land. Writer schema + reader schema are
+ resolved against each other; that resolution *is* the compatibility
+ story.
 
 Schemas are documentation the compiler can check. They also let you
 generate code and evolve safely. The downside: you cannot `cat` a
@@ -92,7 +92,7 @@ you have the same problem without the tooling.
 ### Event-driven architectures
 
 Producers write messages; consumers read them later, independently.
-Message brokers and logs (ch. 12, [kafka-workshop](../../kafka-workshop))
+Message brokers and logs (ch. 12)
 are the usual pipes. Compatibility is harder than RPC: you cannot
 assume consumers upgraded first. **Schema registry + Avro/Protobuf**
 exists for this. If a consumer republishes to another topic, it must
@@ -107,32 +107,25 @@ than “RPC that pretends to be local.”
 ## How this shows up when you design something
 
 - Public HTTP API: JSON, version in the URL or in fields you only add,
-  never mutate.
+ never mutate.
 - Internal high-QPS services: gRPC + Protobuf, server-first deploys.
 - Kafka pipelines: Avro/Protobuf + registry, compatibility checks in CI.
 - Mobile: forever-forward-compatible responses.
 - Workflows: version the workflow definition; never rename a field
-  mid-flight.
+ mid-flight.
 
 In an interview, saying “rolling deploy requires forward and backward
 compatible events” is the difference between a pretty diagram and a
 system you could actually ship.
 
-## Ties to other workshops
-
-- [kafka-workshop producers](../../kafka-workshop/2-producers-and-consumers/PRODUCERS.md)
-  — serializers are this chapter.
-- [k8s-workshop rolling updates](../../k8s-workshop/2-resources/deployment/README.md)
-  — the process-side of rolling upgrades; encoding is the data-side.
-
 ## Check yourself
 
 1. New code adds a field. Old code reads the record and writes it back.
-   What must the old code do to not destroy the new field?
+ What must the old code do to not destroy the new field?
 2. Why are pickle files a bad choice for a queue between two services?
 3. Server-first vs client-first: which compatibility direction is
-   stricter for a mobile app?
+ stricter for a mobile app?
 4. A Temporal workflow runs for two weeks while you deploy daily. What
-   can you change in the workflow payload, and what can you not?
+ can you change in the workflow payload, and what can you not?
 
 Continue to [Replication](../6-replication/).

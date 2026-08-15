@@ -73,29 +73,21 @@ reprocessing with a suppress list. Pick one on purpose.
 Add a fifth section to the ch. 13 checklist:
 
 6. What personal data is stored, where the copies are, retention, who
-   can query it, how deletion propagates to logs, backups, and models,
-   and which decisions are automated with what appeal path.
+ can query it, how deletion propagates to logs, backups, and models,
+ and which decisions are automated with what appeal path.
 
 If the design is a feed, mention feedback loops. If it is credit/fraud,
 mention false positives as a first-class SLO, not only p99 latency.
 
-## Ties to other workshops
-
-- Kafka retention and compaction: deletion is not “the consumer acked.”
-  You need a policy.
-- Search indexes and caches are extra copies for GDPR.
-- [k8s secrets](../../k8s-workshop/2-resources/secret/README.md) —
-  necessary, not sufficient, for privacy.
-
 ## Check yourself
 
 1. List every copy of an email address in a “typical” system that has
-   OLTP + Kafka + Elastic + warehouse. What does “delete me” mean?
+ OLTP + Kafka + Elastic + warehouse. What does “delete me” mean?
 2. Why is a very accurate fraud model still a design failure if false
-   positives have no appeal?
+ positives have no appeal?
 3. How does a feedback loop show up in a “for you” timeline?
 4. Name one technique to honor erasure without throwing away the entire
-   event log.
+ event log.
 
 This is the last DDIA chapter in the workshop.
 

@@ -5,10 +5,9 @@ Companion notes for **Chapter 9** of *Designing Data-Intensive Applications*
 algorithms are ugly: the network lies, clocks lie, processes freeze, and
 you cannot tell which.
 
-Joshi’s
-[foundations](../../distributed-systems-workshop/1-foundations/)
-name the same four demons (crash, delay, pause, unsync clocks). Read
-them together.
+The same four demons show up everywhere: crash, delay, pause, and
+unsynchronized clocks. This chapter is how DDIA names them so you can
+design for them on purpose.
 
 ## What this chapter is for
 
@@ -35,7 +34,7 @@ fail over (split brain risk). Too long: users wait. Adaptive timeouts
 help; they do not solve the ambiguity.
 
 **Fault detection** is therefore probabilistic. Gossip failure
-detectors, heartbeats ([HeartBeat](../../distributed-systems-workshop/2-replication/README_Consensus.md)),
+detectors, heartbeats,
 and “limping” nodes (alive but too slow to be useful) are all worse
 than the textbook crash.
 
@@ -59,7 +58,8 @@ time *on one machine*. They do not compare across machines.
 **Clock sync:** NTP, Google TrueTime (bounded uncertainty, still not
 zero). If you *must* use wall time (legal timestamps, TTL), treat
 **uncertainty** as part of the API: wait out the error bound before
-exposing a write (Joshi’s **Clock-Bound Wait**).
+exposing a write (**clock-bound wait**: do not expose a result until the
+uncertainty window has passed).
 
 **Process pauses:** GC, swapping, “the cloud froze my VM,” a SIGSTOP.
 The process wakes up with a stale view: it still thinks it is leader,
@@ -77,10 +77,9 @@ cannot talk to anyone must **stop**, not invent a new truth.
 **Distributed locks and leases:** “SETNX in Redis” is not a lock that
 survives pauses. You need:
 
-- A **lease** (time-bounded, must renew) —
-  [Lease](../../distributed-systems-workshop/5-cluster-management/).
+- A **lease** (time-bounded, must renew).
 - A **fencing token** (monotonic number from the lock service) that
-  storage checks, so a zombie with an expired lease cannot write.
+ storage checks, so a zombie with an expired lease cannot write.
 
 Without fencing, the client that paused still holds a “lock” in its
 own imagination.
@@ -115,31 +114,24 @@ fault injection finds the pause/network cases humans do not storyboard.
 ## How this shows up when you design something
 
 - Every arrow on the whiteboard needs a timeout *and* a retry policy
-  that cannot metastable-storm (ch. 2).
+ that cannot metastable-storm (ch. 2).
 - Every lock needs fencing.
 - Every “the replica is healthy” is a timeout, not a fact.
 - Every timestamp in a conflict resolver is a confession that you
-  trust clocks.
+ trust clocks.
 
 In interviews, calling out “we cannot know if the payment RPC succeeded
 if we timed out” is the adult move. Idempotent APIs (ch. 5 / 13) exist
 because of this sentence.
 
-## Ties to other workshops
-
-- [1-foundations](../../distributed-systems-workshop/1-foundations/)
-- [HeartBeat, Generation Clock](../../distributed-systems-workshop/2-replication/README_Consensus.md)
-- [Lamport / Hybrid clocks](../../distributed-systems-workshop/4-distributed-time/)
-- [Lease](../../distributed-systems-workshop/5-cluster-management/)
-
 ## Check yourself
 
 1. You sent `POST /charge` and got no response. What are the three
-   worlds you might be in, and what must the API provide so retry is
-   safe?
+ worlds you might be in, and what must the API provide so retry is
+ safe?
 2. Why is `if lock.acquired: write_db()` wrong after a GC pause?
 3. Safety vs liveness: which one should a consensus group keep during
-   a partition?
+ a partition?
 4. Give one reason wall-clock last-write-wins corrupts a calendar app.
 
 Continue to [Consistency and consensus](../10-consistency-and-consensus/).

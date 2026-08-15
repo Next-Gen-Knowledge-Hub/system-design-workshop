@@ -7,7 +7,7 @@ unreliable nodes (ch. 9), what does **“the” value** even mean — and
 which algorithms can make a cluster behave like one careful computer?
 
 Hands-on:
-[quorum, Paxos, Raft](../../distributed-systems-workshop/2-replication/README_Consensus.md).
+quorum, Paxos, Raft.
 
 ## What this chapter is for
 
@@ -28,9 +28,9 @@ value). No “it depends which replica.”
 That is stricter than:
 
 - **Serializability** (ch. 8) — about *transactions* behaving as some
-  serial order; it does not by itself say replicas exist.
+ serial order; it does not by itself say replicas exist.
 - **Causal / sequential / eventual consistency** — weaker stories that
-  many geo systems actually provide.
+ many geo systems actually provide.
 
 **What you use linearizability for:** uniqueness (“this username is
 taken”), locks and leader election, single-object compare-and-set,
@@ -58,11 +58,10 @@ failure. Distributed IDs:
 
 - UUIDs: unique, not ordered, not causal.
 - Snowflake-style (timestamp + worker id): mostly ordered, **not**
-  linearizable, clock-dependent (ch. 9).
+ linearizable, clock-dependent (ch. 9).
 - Pre-allocated blocks: fast, can have gaps.
 
-**Logical clocks** (Lamport, HLC — 
-[distributed time workshop](../../distributed-systems-workshop/4-distributed-time/))
+**Logical clocks** (Lamport clocks, hybrid logical clocks)
 give an order that respects **happens-before**. They do **not** give
 linearizable IDs by themselves. If you need “this id was assigned
 before that one *in real time across the cluster*,” you are back to
@@ -78,7 +77,7 @@ nodes crash and messages duplicate.
 forever. Raft and Multi-Paxos are this. Kafka’s controller, etcd,
 ZooKeeper, Consul, and the commit log of many “NewSQL” stores are this.
 Once you have a replicated log, you can run a state machine on it
-(Joshi’s **Replicated Log**).
+(a **replicated log** driving a state machine).
 
 Problems that **are** consensus in disguise (if you can solve one, you
 can solve the others, with care):
@@ -88,18 +87,17 @@ can solve the others, with care):
 - Uniqueness constraints under concurrency
 - Append to a shared log (total order)
 - Atomic commit (all shards yes or all no) — related, with extra
-  operational shape via 2PC (ch. 8)
+ operational shape via 2PC (ch. 8)
 
 **Consensus in practice:** you run it on a **small** cluster (3 or 5
 nodes), not on 500. The 500 get the decision via replication or gossip.
-That small cluster is the **consistent core**
-([cluster management](../../distributed-systems-workshop/5-cluster-management/)).
-etcd/ZooKeeper: store membership, leader, config, partition map — not
-your petabytes of user rows.
+That small cluster is the **consistent core** for membership, leader,
+config, and partition maps — not your petabytes of user rows.
+etcd/ZooKeeper are the usual implementations.
 
-**Coordination services** (ZK, etcd): ephemeral nodes, watches
-([State Watch](../../distributed-systems-workshop/5-cluster-management/)),
-leader election. Use them as a core, not as a general database.
+**Coordination services** (ZK, etcd): ephemeral nodes, watches /
+state notifications, and leader election. Use them as a core, not as
+a general database.
 
 What consensus does **not** fix: Byzantine lying (usually), your
 application’s write skew across two keys (need transactions), or
@@ -108,32 +106,26 @@ application’s write skew across two keys (need transactions), or
 ## How this shows up when you design something
 
 - Need “only one owner of this job”? Consensus or a lease with fencing
-  from a consensus store — not a single Redis `SETNX` without a token.
+ from a consensus store — not a single Redis `SETNX` without a token.
 - Need “read your writes” for one user? Often sticky sessions or read
-  from primary; you do not need linearizability of the whole social
-  graph.
+ from primary; you do not need linearizability of the whole social
+ graph.
 - Need unique username at 10k QPS globally? Linearizable index or an
-  allocation service; eventual uniqueness with “sorry, pick another”
-  is a product choice (ch. 13).
+ allocation service; eventual uniqueness with “sorry, pick another”
+ is a product choice (ch. 13).
 - Draw etcd as a tiny box. Do not put user traffic through it.
 
 Interview phrase: “This constraint is linearizable; this feed is
 eventual; here is why that split is OK.”
 
-## Ties to other workshops
-
-- [Raft / Paxos Go](../../distributed-systems-workshop/2-replication/)
-- [etcd-shaped patterns](../../distributed-systems-workshop/5-cluster-management/)
-- [Kafka ISR + controller](../../kafka-workshop/3-internals-and-reliability/INTERNALS.md)
-
 ## Check yourself
 
 1. After a linearizable write of `x=1` completes, a read that started
-   later returns `0`. What invariant broke?
+ later returns `0`. What invariant broke?
 2. Why can a majority-quorum key-value store still show a value that
-   then disappears?
+ then disappears?
 3. Why is “unique email” a consensus-shaped problem and “count of likes”
-   usually not?
+ usually not?
 4. Why 5 etcd nodes, not 50?
 
 Continue to [Batch processing](../11-batch-processing/).

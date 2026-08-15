@@ -7,12 +7,6 @@ dataset across independent groups of nodes. Each piece is a **shard**
 (partition). Replication (ch. 6) copies the same data; sharding splits
 different data.
 
-Hands-on cousins:
-[distributed-systems-workshop partitioning](../../distributed-systems-workshop/3-partitioning/),
-[mongo sharding](../../mongo-wokshop/4-replication_and_sharding/SHARDING.md),
-[redis cluster](../../redis-workshop/3-clusterAndShard/README_cluster&shard.md),
-[kafka partitions](../../kafka-workshop/1-setup/OVERVIEW.md).
-
 ## What this chapter is for
 
 Sharding buys **scale** (data size and throughput) and sometimes
@@ -44,7 +38,7 @@ Keys are sorted; shard 1 owns `A–F`, shard 2 `G–M`, … Range scans
 a popular prefix. Systems that auto-split hot ranges (HBase,
 CockroachDB, Mongo range) exist because humans guess boundaries badly.
 
-This is Joshi’s **Key-Range Partitions**.
+This is the classic **key-range partitioning** style.
 
 ### By hash of key
 
@@ -52,8 +46,8 @@ This is Joshi’s **Key-Range Partitions**.
 virtual shards. Load spreads. Range scans become scatter-gather.
 **Consistent hashing** and **fixed partition counts** (hash to 1024
 slots, map slots to nodes) avoid reshuffling every key when you add a
-box — see
-[Fixed Partitions](../../distributed-systems-workshop/3-partitioning/README.md).
+box — fixed partition counts (hash to many slots, map slots to nodes)
+are the usual fix.
 Kafka uses a fixed partition count per topic for this reason; changing
 it **reshuffles keys** and can break ordering.
 
@@ -82,12 +76,12 @@ The client must hit the node that owns the key. Options:
 3. Any node accepts and **forwards** (gossip the map).
 
 The map itself is precious metadata: often stored in a small strongly
-consistent store (ZooKeeper, etcd — Joshi’s **Consistent Core**,
-[cluster management](../../distributed-systems-workshop/5-cluster-management/)).
+consistent store (ZooKeeper, etcd — a **consistent core** for cluster
+metadata).
 If the map is wrong, you silently read stale splits or write to the
 wrong owner.
 
-Service discovery and Kubernetes Services ([k8s-workshop](../../k8s-workshop/2-resources/service/README.md))
+Service discovery and Kubernetes Services
 route to *pods*, not to shards. Do not confuse “load balancer” with
 “shard router.”
 
@@ -118,7 +112,7 @@ a network-heavy AND.
 Always say:
 
 - Shard key (`user_id` is the usual honest default for user-centric
-  products).
+ products).
 - Hash vs range, and which queries become scatter-gather.
 - How a new node gets data.
 - How a request finds the shard.
@@ -128,23 +122,14 @@ A design that shards by `user_id` and then needs “all unpaid invoices
 in the country” has just designed a batch job or a global index,
 whether they know it or not.
 
-## Ties to other workshops
-
-- [3-partitioning](../../distributed-systems-workshop/3-partitioning/) —
-  fixed partitions, range, 2PC in `Go`.
-- [mongo sharding](../../mongo-wokshop/4-replication_and_sharding/SHARDING.md)
-- [redis cluster](../../redis-workshop/3-clusterAndShard/README_cluster&shard.md)
-- [kafka partitions](../../kafka-workshop/1-setup/OVERVIEW.md) — shard
-  of a *log*, ordered per partition.
-
 ## Check yourself
 
 1. Why does `hash(key) % node_count` make adding a node a disaster, and
-   what is the usual fix?
+ what is the usual fix?
 2. You shard orders by `customer_id`. How do you serve “orders placed
-   in the last hour” for ops?
+ in the last hour” for ops?
 3. Local vs global secondary index: which hurts writes, which hurts
-   reads?
+ reads?
 4. A tenant is 40% of QPS. What do you do besides “add more shards”?
 
 Continue to [Transactions](../8-transactions/).

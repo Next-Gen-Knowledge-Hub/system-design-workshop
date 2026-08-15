@@ -30,7 +30,7 @@ The **relational model** puts data in relations (tables) of tuples
 - Records **refer to each other** a lot (users, orders, payments).
 - You need **joins**, constraints, and ad hoc query.
 - Analytics will happen in SQL (star / snowflake schemas in the
-  warehouse).
+ warehouse).
 
 The **document model** stores a nested structure (JSON, BSON) as the
 unit of load/save. It fits when the unit of access is a **self-contained
@@ -57,8 +57,8 @@ normalize the dimensions further. Warehouse people live here; product
 engineers meet it when “the dashboard is wrong.”
 
 **When to use which:** if your document is the API response and
-cross-document links are rare, documents are a joy (see
-[mongo-wokshop](../../mongo-wokshop)). If the interesting questions
+cross-document links are rare, documents are a joy (MongoDB is the
+common industrial form). If the interesting questions
 are joins and constraints, start relational. If the interesting
 questions are “N hops from this person,” keep reading.
 
@@ -75,12 +75,12 @@ Languages you will see named:
 - **SQL recursive queries** — same idea, more verbose, improving.
 - **Triple stores + SPARQL** — subject–predicate–object (RDF, semantic web).
 - **Datalog** — recursive logical rules; the academic grandparent, still
-  useful for permissions and reachability.
+ useful for permissions and reachability.
 - **GraphQL** — *not* a graph database. It is an API query language
-  where the client asks for a tree of fields. The backend may be
-  relational. It shines at “give me this nested JSON” and hurts when
-  clients ask for unbounded nested graphs (N+1 queries unless you
-  batch). Treat it as a **presentation layer**, not a storage model.
+ where the client asks for a tree of fields. The backend may be
+ relational. It shines at “give me this nested JSON” and hurts when
+ clients ask for unbounded nested graphs (N+1 queries unless you
+ batch). Treat it as a **presentation layer**, not a storage model.
 
 Use graphs when the *product question* is connectivity: fraud rings,
 recommendations, bill-of-materials, org charts. Do not use them as a
@@ -99,9 +99,8 @@ search index, Redis structure). You can rebuild a read model by
 replaying. You cannot efficiently answer “all users in Tehran” from the
 raw log — that is what the view is for.
 
-This is the same instinct as a WAL ([distributed-systems-workshop
-Write-Ahead Log](../../distributed-systems-workshop/2-replication/README_Log.md))
-and as Kafka compacting a changelog ([kafka-workshop](../../kafka-workshop)).
+This is the same instinct as a write-ahead log
+and as Kafka compacting a changelog.
 Chapter 12 will make the stream explicit. Here the point is modeling:
 some domains (ledgers, orders, collaborative editors) *are* a history.
 
@@ -142,33 +141,24 @@ that evolution explicit when data leaves the process.
 Ask:
 
 - What is the **unit of read/write**? A document? A row plus joins? A
-  path?
+ path?
 - Which questions are **point gets** vs **multi-hop** vs **scans**?
 - Do we need a **system of record** that is a log, plus views?
 - Is GraphQL an API convenience or are we accidentally designing
-  storage around it?
+ storage around it?
 
 A standard interview move: user/profile as document or row; social graph
 as graph or two tables (`follows`); feed as a derived view (ch. 2).
 Naming those three models in one product is what this chapter trains.
 
-## Ties to other workshops
-
-- [mongo-wokshop](../../mongo-wokshop/1-setup/DATA_MODEL_AND_DATA_TYPES.md)
-  — document model in the flesh.
-- [redis-workshop](../../redis-workshop/2-internals/README_Datastructures.md)
-  — not a document store; specialized structures as a *derived* model.
-- [kafka-workshop](../../kafka-workshop) — the log that event sourcing
-  wants when it grows up.
-
 ## Check yourself
 
 1. When is denormalizing a city name into every address document fine,
-   and when will it bite you?
+ and when will it bite you?
 2. Why is GraphQL not an answer to “we need a graph database”?
 3. How would you rebuild a “follower count” read model after a bug if
-   you had events vs if you only had the current table?
+ you had events vs if you only had the current table?
 4. Star schema: what lives in the fact table vs a dimension, for ride
-   receipts?
+ receipts?
 
 Continue to [Storage and retrieval](../4-storage-and-retrieval/).

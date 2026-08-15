@@ -6,10 +6,9 @@ users live on other continents, reads outgrow one box. Replication
 means **the same data on several nodes**. The idea is simple. The
 failure modes are not.
 
-This chapter pairs naturally with
-[distributed-systems-workshop replication](../../distributed-systems-workshop/2-replication/)
-(WAL, quorum, Raft) and with
-[mongo replication](../../mongo-wokshop/4-replication_and_sharding/REPLICATION.md).
+This chapter is where DDIA names the replication styles you will meet
+in every production database: single-leader, multi-leader, and
+leaderless (quorum) — plus the lag and conflict problems that follow.
 
 ## What this chapter is for
 
@@ -45,7 +44,7 @@ reconfigure. Async: leader acknowledges after local persist. Fast;
 failover can **lose** the last acknowledged writes. Many systems offer
 “wait for N replicas” in the middle (Kafka `acks=all` +
 `min.insync.replicas` — see
-[kafka reliability](../../kafka-workshop/3-internals-and-reliability/RELIABILITY.md)).
+kafka reliability).
 
 **New followers:** copy a snapshot, then catch up the replication log
 from the snapshot’s position. If you cannot do that, you cannot grow
@@ -54,8 +53,8 @@ the cluster.
 **Node outages:** follower dies → catch up from the log (need enough
 retention). Leader dies → failover. Failover needs: detect death
 (timeouts, ch. 9), elect a new leader (ch. 10), make sure the old
-leader cannot keep writing (**fencing**, generation clock — Joshi’s
-[Generation Clock](../../distributed-systems-workshop/2-replication/README_Consensus.md)).
+leader cannot keep writing (**fencing** via a monotonically increasing
+generation / term / epoch number).
 Split-brain is the nightmare: two leaders, diverging data.
 
 **Replication log implementations:** statement-based (replay SQL — breaks
@@ -67,17 +66,17 @@ events). Logical change events are also how CDC feeds Kafka (ch. 12).
 If you read from a follower:
 
 - **Read-your-writes** can fail: you post, refresh, the replica has
-  not got it yet.
+ not got it yet.
 - **Monotonic reads** can fail: you see a new value, then an older
-  replica, time appears to go backward.
+ replica, time appears to go backward.
 - **Consistent prefix** can fail: you see the reply before the question
-  if those writes were on different partitions / arrived out of order.
+ if those writes were on different partitions / arrived out of order.
 
 Fixes are application-level as much as database-level: read from the
 leader for “my own writes,” session stickiness, “read at least this
 timestamp / LSN,” or don’t use lagging replicas for those paths.
-Follower reads are a pattern with a contract — see
-[Follower Reads](../../distributed-systems-workshop/2-replication/README_ClientHandling.md).
+Follower reads are a pattern with an explicit contract: what freshness
+and which failures the client must tolerate.
 
 ## Multi-leader replication
 
@@ -121,15 +120,14 @@ up later.
 
 **Performance vs single-leader:** you skip leader failover pauses, but
 you pay coordination on *every* write and you get weaker consistency
-unless you are very careful. The Joshi workshop’s
-[Majority Quorum](../../distributed-systems-workshop/2-replication/README_Consensus.md)
-note is the one to reread: quorum RW **alone is not linearizable**.
+unless you are very careful. Quorum reads and writes **alone are not
+linearizable** — overlapping majorities do not by themselves give you
+a total order clients can rely on (see [ch. 10](../10-consistency-and-consensus/)).
 A value can appear and then vanish on the next read.
 
 **Detecting concurrent writes:** last-write-wins by timestamp (lies when
-clocks lie), version vectors (detect siblings — same as
-[Version Vector](../../distributed-systems-workshop/2-replication/README_Versioning.md)).
-Merging siblings is application work.
+clocks lie), or **version vectors** (detect siblings without picking a
+winner). Merging siblings is application work.
 
 ## How this shows up when you design something
 
@@ -143,22 +141,14 @@ Default sketch for a user-facing OLTP store:
 Do not draw three boxes labeled “replica” without saying who takes
 writes.
 
-## Ties to other workshops
-
-- [distributed-systems-workshop](../../distributed-systems-workshop/2-replication/)
-  — WAL, quorum, Raft, version vectors in `Go`.
-- [mongo-wokshop replication](../../mongo-wokshop/4-replication_and_sharding/REPLICATION.md)
-- [kafka-workshop](../../kafka-workshop/3-internals-and-reliability/) —
-  leader per partition, ISR, high watermark.
-
 ## Check yourself
 
 1. You acknowledged a write with async replication and then the leader
-   died. What might a client have seen that is now gone?
+ died. What might a client have seen that is now gone?
 2. Give a read-your-writes bug in a social app, and one fix that does
-   not require linearizability everywhere.
+ not require linearizability everywhere.
 3. Why is last-write-wins dangerous for a shopping cart?
 4. When would you actually want multi-leader, and what will you do with
-   conflicts?
+ conflicts?
 
 Continue to [Sharding](../7-sharding/).

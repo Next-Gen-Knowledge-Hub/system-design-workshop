@@ -25,17 +25,17 @@ transaction” instead of “manually unwind five tables.”
 The acronym is marketing glued to four different ideas. Be precise:
 
 - **Atomicity** (here: *all or nothing* for writes in the transaction,
-  not atomic CPU instructions). Abort rolls everything back.
+ not atomic CPU instructions). Abort rolls everything back.
 - **Consistency** — the overloaded one. In ACID it means *your
-  application invariants* (balance ≥ 0) hold if each transaction
-  preserves them. The database cannot know your business rules unless
-  you encode them as constraints. Do not confuse with *consistency* in
-  CAP or replica consistency (ch. 6 / 10).
+ application invariants* (balance ≥ 0) hold if each transaction
+ preserves them. The database cannot know your business rules unless
+ you encode them as constraints. Do not confuse with *consistency* in
+ CAP or replica consistency (ch. 6 / 10).
 - **Isolation** — concurrent transactions do not step on each other.
-  In theory, serializable. In practice, most databases default weaker.
+ In theory, serializable. In practice, most databases default weaker.
 - **Durability** — after commit, a crash does not eat the write (WAL,
-  fsync, replication — ch. 4 / 6). “Committed to the leader’s memory”
-  is not durable.
+ fsync, replication — ch. 4 / 6). “Committed to the leader’s memory”
+ is not durable.
 
 **Single-object** operations (increment one counter with a compare-and-set)
 are widely atomic even without a transaction API. **Multi-object**
@@ -79,17 +79,16 @@ detects them.
 the transactions. Three implementation families:
 
 1. **Actual serial execution** — one thread, or one partition, runs
-   transactions one after another (VoltDB-style, Lua in Redis,
-   [redis scripting](../../redis-workshop/2-internals/README_Lua.md)).
-   Blazing if transactions are short and data fits in memory. Dies if
-   you need multi-partition interactive transactions.
+ transactions one after another (VoltDB-style, or Redis Lua scripts).
+ Blazing if transactions are short and data fits in memory. Dies if
+ you need multi-partition interactive transactions.
 2. **Two-phase locking (2PL)** — readers and writers take locks;
-   writers block readers of that row. Classic serializability. Under
-   contention, latency explodes. Deadlocks abort a victim.
+ writers block readers of that row. Classic serializability. Under
+ contention, latency explodes. Deadlocks abort a victim.
 3. **Serializable snapshot isolation (SSI)** — optimistic: run like SI,
-   detect write-skew-ish conflicts at commit, abort the loser. Postgres
-   `SERIALIZABLE` is this family. Aborts rise under contention; retries
-   become part of the app.
+ detect write-skew-ish conflicts at commit, abort the loser. Postgres
+ `SERIALIZABLE` is this family. Aborts rise under contention; retries
+ become part of the app.
 
 Pick based on contention and whether you can keep transactions short.
 
@@ -101,8 +100,7 @@ no longer local.
 **Two-phase commit (2PC):** a coordinator asks all participants to
 **prepare** (vote yes, durable), then **commit** or **abort**. If
 everyone votes yes, commit. If anyone says no or times out, abort.
-This is Joshi’s
-[Two-Phase Commit](../../distributed-systems-workshop/3-partitioning/README.md)
+This is classic **two-phase commit**
 — agreement on *whether this transaction happened*, not on a log of
 values (that is consensus / Raft).
 
@@ -115,34 +113,26 @@ VoltDB) are less miserable because one vendor owns recovery.
 
 **Exactly-once message processing** often *is* “consume, write DB,
 commit offsets” as one transaction, or a transactional outbox. Kafka
-transactions ([kafka-workshop](../../kafka-workshop/3-internals-and-reliability/RELIABILITY.md))
-are a specialized form. Chapter 12–13 offer the *async, idempotent*
+transactions are a specialized form. Chapter 12–13 offer the *async, idempotent*
 alternative when 2PC across products is not worth it.
 
 ## How this shows up when you design something
 
 - Money / inventory / seats: name the isolation level. “Read committed”
-  is not enough for “don’t double-sell.”
+ is not enough for “don’t double-sell.”
 - Read-modify-write: atomic update or version check, not get/put.
 - Cross-shard transfer: 2PC, or a saga/outbox with idempotency, and
-  *say which*.
+ *say which*.
 - Do not sprinkle `SERIALIZABLE` on every request “to be safe” without
-  talking about abort rates.
-
-## Ties to other workshops
-
-- [2PC Go sample](../../distributed-systems-workshop/3-partitioning/)
-- [mongo atomic](../../mongo-wokshop/3-aggregation_and_atomic/ATOMIC.md)
-- [redis transactions / Lua](../../redis-workshop/2-internals/README_Operations.md)
-- [Kafka exactly-once](../../kafka-workshop/3-internals-and-reliability/RELIABILITY.md)
+ talking about abort rates.
 
 ## Check yourself
 
 1. Explain write skew with two on-call doctors (or two remaining seats)
-   without using the word “lock.”
+ without using the word “lock.”
 2. Why does snapshot isolation not automatically fix that?
 3. Atomicity vs durability: a power cut after commit, vs abort in the
-   middle of two updates.
+ middle of two updates.
 4. When is 2PC the right tool, and when is an outbox + retry better?
 
 Continue to [The trouble with distributed systems](../9-distributed-trouble/).

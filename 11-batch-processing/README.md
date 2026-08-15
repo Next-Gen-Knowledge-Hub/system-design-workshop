@@ -45,10 +45,10 @@ jobs which files are “the table.”
 Two layers people confuse:
 
 - **Cluster schedulers** (YARN, Kubernetes, Spark’s own manager): where
-  tasks run, retries of a failed task, packing CPUs.
+ tasks run, retries of a failed task, packing CPUs.
 - **Workflow orchestrators** (Airflow, Dagster, Temporal for some
-  jobs): the DAG of *jobs* (“ETL then train then publish”), calendars,
-  dependencies.
+ jobs): the DAG of *jobs* (“ETL then train then publish”), calendars,
+ dependencies.
 
 A failed task should be retried **without** double-applying side
 effects. That is why the output of a batch stage should be a **new
@@ -84,10 +84,10 @@ for ML feature jobs (ch. 3). Same engine, different costume.
 - **ETL / ELT** — operational systems → lake/warehouse. Scheduled.
 - **Analytics** — pre-aggregations and ad hoc SQL.
 - **Machine learning** — dump, clean, featurize, train. Embeddings for
-  ch. 4 vector indexes are often a batch (or stream) job.
+ ch. 4 vector indexes are often a batch (or stream) job.
 - **Serving derived data** — the job’s output is bulk-loaded into
-  MySQL, Elasticsearch, a KV store, so the product can read it at OLTP
-  latency. The batch job is not user-facing; the **loaded view** is.
+ MySQL, Elasticsearch, a KV store, so the product can read it at OLTP
+ latency. The batch job is not user-facing; the **loaded view** is.
 
 That last point is the bridge to ch. 12–13: users never query HDFS.
 They query a store that was **derived**.
@@ -95,25 +95,18 @@ They query a store that was **derived**.
 ## How this shows up when you design something
 
 - “Recommendations” in an interview: nightly batch is a valid v1;
-  streaming updates are v2. Say the freshness SLO.
+ streaming updates are v2. Say the freshness SLO.
 - Backfills: you *will* reprocess. Design output as immutable dates
-  (`dt=2026-08-15/`) not `UPDATE` in place.
+ (`dt=2026-08-15/`) not `UPDATE` in place.
 - Do not run heavy analytics on the OLTP primary (ch. 1).
-
-## Ties to other workshops
-
-- [kafka-workshop](../../kafka-workshop) — often the *input* to batch
-  (dump topics to S3) or the *output* (publish derived events).
-- Object storage is the lake; k8s is a common place to run the
-  compute ([k8s-workshop](../../k8s-workshop)).
 
 ## Check yourself
 
 1. Why is “mapper writes to Postgres” a worse batch design than
-   “mapper writes Parquet, later a loader job”?
+ “mapper writes Parquet, later a loader job”?
 2. What is a shuffle, and why does key skew kill it?
 3. MapReduce vs Spark-style dataflow: what got faster, for users?
 4. How would you rebuild a search index from a lake if yesterday’s
-   job used a buggy tokenizer?
+ job used a buggy tokenizer?
 
 Continue to [Stream processing](../12-stream-processing/).

@@ -10,12 +10,8 @@ book that sits at the center of this field. Each numbered folder is one chapter
 of that book: the topics from the chapter, written as a human-friendly companion
 you can read after (or alongside) the book, not as a substitute for it.
 
-This repo follows the same shape as
-[distributed-systems-workshop](../distributed-systems-workshop) (built around
-Joshi's *Patterns of Distributed Systems*) and
-[kafka-workshop](../kafka-workshop): one folder per topic, a `README.md` that
-explains the ideas in plain language, and links into the other workshops where
-you already implemented the idea in `Go` or Docker.
+Each numbered folder is one chapter: a `README.md` that explains the
+ideas in plain language, with check-yourself questions to lock them in.
 
 The notes here are **original study material**. They do not copy the book. Read
 the chapter, then use the matching folder to lock in the vocabulary, the
@@ -24,74 +20,74 @@ trade-offs, and how the idea shows up in a real design.
 Later sections of this workshop will add:
 
 - **Interview-style system design** — timed walkthroughs in the spirit of
-  Alex Xu's *System Design Interview* volumes (not a theory replacement for
-  DDIA).
+ Alex Xu's *System Design Interview* volumes (not a theory replacement for
+ DDIA).
 - **More books in this field** — Vitillo, Burns, Ford/Richards (*The Hard
-  Parts*), and others. DDIA stays the spine; those books fill interview
-  drills, platform patterns, and staff-level trade-off language.
+ Parts*), and others. DDIA stays the spine; those books fill interview
+ drills, platform patterns, and staff-level trade-off language.
 
 This repository contains the following topics
 
 **Part A — Foundations (how to even talk about a design)**
 
 1. [Trade-offs in data systems architecture](./1-architecture-tradeoffs/) — DDIA ch. 1
-    - Operational vs analytical systems (OLTP / OLAP)
-    - Cloud vs self-hosting, cloud-native architecture
-    - Distributed vs single-node
-    - Data systems, law, and society
+ - Operational vs analytical systems (OLTP / OLAP)
+ - Cloud vs self-hosting, cloud-native architecture
+ - Distributed vs single-node
+ - Data systems, law, and society
 2. [Defining nonfunctional requirements](./2-nonfunctional-requirements/) — DDIA ch. 2
-    - Case study: social-network home timelines
-    - Performance (latency, percentiles, SLAs)
-    - Reliability and fault tolerance
-    - Scalability and maintainability
+ - Case study: social-network home timelines
+ - Performance (latency, percentiles, SLAs)
+ - Reliability and fault tolerance
+ - Scalability and maintainability
 
 **Part B — Data on one machine (models, disks, bytes)**
 
 3. [Data models and query languages](./3-data-models/) — DDIA ch. 3
-    - Relational vs document
-    - Graphs, GraphQL, event sourcing / CQRS
-    - DataFrames, matrices, arrays
+ - Relational vs document
+ - Graphs, GraphQL, event sourcing / CQRS
+ - DataFrames, matrices, arrays
 4. [Storage and retrieval](./4-storage-and-retrieval/) — DDIA ch. 4
-    - LSM-trees vs B-trees
-    - Column stores, warehouses, vector indexes
+ - LSM-trees vs B-trees
+ - Column stores, warehouses, vector indexes
 5. [Encoding and evolution](./5-encoding-and-evolution/) — DDIA ch. 5
-    - JSON / Protobuf / Avro
-    - Dataflow through DBs, RPC, workflows, events
+ - JSON / Protobuf / Avro
+ - Dataflow through DBs, RPC, workflows, events
 
 **Part C — Distributed data (the heart of system design)**
 
 6. [Replication](./6-replication/) — DDIA ch. 6
-    - Single-leader, multi-leader, leaderless
-    - Lag, conflicts, sync engines / local-first
+ - Single-leader, multi-leader, leaderless
+ - Lag, conflicts, sync engines / local-first
 7. [Sharding](./7-sharding/) — DDIA ch. 7
-    - Hash vs range, hot spots, rebalancing, request routing
-    - Local vs global secondary indexes
+ - Hash vs range, hot spots, rebalancing, request routing
+ - Local vs global secondary indexes
 8. [Transactions](./8-transactions/) — DDIA ch. 8
-    - ACID, isolation levels, serializability
-    - Distributed transactions and 2PC
+ - ACID, isolation levels, serializability
+ - Distributed transactions and 2PC
 9. [The trouble with distributed systems](./9-distributed-trouble/) — DDIA ch. 9
-    - Networks, clocks, pauses, quorums, Byzantine faults
-    - System models, formal methods, randomized testing
+ - Networks, clocks, pauses, quorums, Byzantine faults
+ - System models, formal methods, randomized testing
 10. [Consistency and consensus](./10-consistency-and-consensus/) — DDIA ch. 10
-    - Linearizability, logical clocks, ID generation
-    - Consensus, coordination services
+ - Linearizability, logical clocks, ID generation
+ - Consensus, coordination services
 
 **Part D — Derived data (how systems stay in sync without one giant DB)**
 
 11. [Batch processing](./11-batch-processing/) — DDIA ch. 11
-    - Unix tools → MapReduce → dataflow engines
-    - ETL, analytics, ML, serving derived data
+ - Unix tools → MapReduce → dataflow engines
+ - ETL, analytics, ML, serving derived data
 12. [Stream processing](./12-stream-processing/) — DDIA ch. 12
-    - Message brokers vs log-based brokers
-    - CDC, time, joins, fault tolerance
+ - Message brokers vs log-based brokers
+ - CDC, time, joins, fault tolerance
 13. [A philosophy of streaming systems](./13-streaming-philosophy/) — DDIA ch. 13
-    - Unbundling the database
-    - End-to-end correctness without 2PC everywhere
+ - Unbundling the database
+ - End-to-end correctness without 2PC everywhere
 
 **Part E — Responsibility**
 
 14. [Doing the right thing](./14-doing-the-right-thing/) — DDIA ch. 14
-    - Predictive analytics, privacy, law
+ - Predictive analytics, privacy, law
 
 **Part F — Coming later (not DDIA)**
 
@@ -105,13 +101,10 @@ page per big choice (leader vs leaderless, B-tree vs LSM, hash vs range, …).
 
 1. Read the DDIA chapter (the book is the source of truth).
 2. Read the matching folder here. It is written to be read, not skimmed: topics
-   follow the book's headings, in everyday language.
-3. Answer the **Check yourself** questions in your own words. That is the same
-   standard as the Joshi workshop exams: takeaway + failure mode + one
-   production example.
-4. When a topic already has running code in this hub, follow the link
-   (WAL, Raft, Kafka logs, Mongo sharding, Redis cluster). DDIA tells you
-   *why* the tool exists; the other workshops show it *running*.
+ follow the book's headings, in everyday language.
+3. Answer the **Check yourself** questions in your own words. A good
+ answer has three parts: the takeaway, the failure mode it prevents, and
+ one production example from a system you have worked on.
 
 Work through the folders in order. Later chapters quietly assume earlier ones:
 you cannot talk honestly about consensus (10) until you have felt replication
@@ -136,15 +129,5 @@ This workshop follows the **2026 second edition** (the PDF in this repo).
 | Ch. 10 Batch processing | Ch. 11 (rewritten; MapReduce no longer the center) |
 | Ch. 11 Stream processing | Ch. 12 |
 | Ch. 12 The future of data systems | Split into ch. 13 (streaming philosophy) + ch. 14 (ethics) |
-
-## Related workshops in this hub
-
-| Workshop | What it adds on top of DDIA |
-|---|---|
-| [distributed-systems-workshop](../distributed-systems-workshop) | Named patterns (WAL, quorum, Raft, 2PC, clocks) with `Go` samples |
-| [kafka-workshop](../kafka-workshop) | A real log-based broker: partitions, ISR, exactly-once |
-| [redis-workshop](../redis-workshop) | In-memory structures, Lua, client-side sharding |
-| [mongo-wokshop](../mongo-wokshop) | Document model, replica sets, sharding |
-| [k8s-workshop](../k8s-workshop) | Where the processes actually run |
 
 Feel free to use and make any change ;)

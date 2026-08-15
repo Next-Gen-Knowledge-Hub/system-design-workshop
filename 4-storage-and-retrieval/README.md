@@ -14,7 +14,7 @@ OLTP and OLAP (ch. 1) are not just different users. They are different
 
 - OLTP: many small reads/writes by key or secondary index, milliseconds.
 - OLAP: few huge scans, aggregations, sequential reads of only the
-  columns you need.
+ columns you need.
 
 If you remember one sentence: **the storage engine is a trade-off
 between write shape and read shape.** Everything else is detail.
@@ -41,10 +41,8 @@ versions.
 
 This family includes **LSM-trees**: RocksDB, Cassandra, HBase, Scylla,
 LevelDB, Lucene’s index segments. Kafka’s log is a cousin (append-only
-segments, compaction as a policy) — see
-[kafka-workshop internals](../../kafka-workshop/3-internals-and-reliability/INTERNALS.md)
-and Joshi’s
-[Segmented Log](../../distributed-systems-workshop/2-replication/README_Log.md).
+segments, compaction as a policy) — the same segmented-log idea as a
+write-ahead log that never truncates until retention says so.
 
 **Why people pick it:** high write throughput (sequential I/O), good
 compression, natural fit for “time keeps moving.” **What you pay:**
@@ -82,8 +80,8 @@ structures) from a column value back to the primary key.
 
 **Covering indexes / clustered indexes** store the row (or extra
 columns) in the index so a query never visits the heap. Faster reads,
-fatter indexes, slower writes. In-memory engines (Redis,
-[redis-workshop](../../redis-workshop)) skip disk layout entirely and
+fatter indexes, slower writes. In-memory engines (Redis and friends)
+skip disk layout entirely and
 still need structures (hash, skiplist, list) — the same “index vs
 scan” idea, in RAM.
 
@@ -136,7 +134,7 @@ Euclidean). Indexes:
 - **Flat** — compare to everything. Exact, slow.
 - **IVF** — cluster the space, search some clusters. Faster, approximate.
 - **HNSW** — layered proximity graph; greedy walk from coarse to fine.
-  Approximate, the usual production default (Faiss, pgvector, …).
+ Approximate, the usual production default (Faiss, pgvector, …).
 
 Semantic search / RAG stacks are this plus a model. The vector index
 is not a system of record. You still need the document store, a
@@ -146,7 +144,7 @@ the model changes.
 ## How this shows up when you design something
 
 - User profile by id → B-tree OLTP (Postgres) or LSM if write-heavy
-  (Cassandra-style).
+ (Cassandra-style).
 - “Posts containing these words” → inverted index, not `LIKE '%foo%'`.
 - “Similar to this paragraph” → embeddings + HNSW, approximate k-NN.
 - “GMV by city by day” → column store / warehouse, not the OLTP primary.
@@ -156,23 +154,14 @@ Naming the engine *type* in an interview (“this is an LSM write path,
 so compaction is on the ops checklist”) scores higher than naming a
 brand.
 
-## Ties to other workshops
-
-- [distributed-systems-workshop WAL](../../distributed-systems-workshop/2-replication/README_Log.md)
-  — the durability log both B-trees and LSM memtables sit on.
-- [mongo-wokshop indexing](../../mongo-wokshop/2-query_and_indexing/INDEX.md)
-  — B-tree-ish indexes and `explain`.
-- [kafka-workshop](../../kafka-workshop) — log segments as a storage
-  engine for *messages*, not rows.
-
 ## Check yourself
 
 1. A workload is 90% writes of new events, rare point reads. LSM or
-   B-tree first, and why?
+ B-tree first, and why?
 2. Why is a column store a bad primary store for a shopping cart?
 3. What does compaction actually delete, and what goes wrong if it
-   falls behind?
+ falls behind?
 4. Why is HNSW allowed to miss a nearer neighbor, and when is that
-   unacceptable?
+ unacceptable?
 
 Continue to [Encoding and evolution](../5-encoding-and-evolution/).

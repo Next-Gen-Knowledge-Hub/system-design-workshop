@@ -20,7 +20,7 @@ replacement):
 Each future write-up should:
 
 1. Restate requirements the way [ch. 2](../2-nonfunctional-requirements/)
-   taught (load, percentiles, failure).
+ taught (load, percentiles, failure).
 2. Pick models and stores with [ch. 3–5](../3-data-models/).
 3. Say replication / sharding / isolation out loud ([ch. 6–8](../6-replication/)).
 4. Mark what is linearizable vs eventual ([ch. 10](../10-consistency-and-consensus/)).

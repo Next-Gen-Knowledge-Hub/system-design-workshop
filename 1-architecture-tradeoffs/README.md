@@ -62,13 +62,13 @@ idea returns as the backbone of [ch. 11–13](../11-batch-processing/).
 
 ```
 Users ──► OLTP (system of record)
-              │
-              │  ETL / CDC / events
-              ▼
-         Warehouse / lake / search / cache   (derived)
-              │
-              ▼
-         Analysts, ML, other services
+ │
+ │ ETL / CDC / events
+ ▼
+ Warehouse / lake / search / cache (derived)
+ │
+ ▼
+ Analysts, ML, other services
 ```
 
 ## Cloud versus self-hosting
@@ -80,7 +80,7 @@ The spectrum the book draws:
 
 - You write it and run it (maximum control, maximum toil).
 - You run off-the-shelf software yourself — on your metal or on cloud VMs
-  (IaaS). Self-hosting Postgres on a VM is still *you* operating Postgres.
+ (IaaS). Self-hosting Postgres on a VM is still *you* operating Postgres.
 - You call a vendor API / SaaS and they operate the software.
 
 Cloud is not automatically cheaper. If load is **steady** and you already
@@ -98,7 +98,7 @@ on replicated object / block storage and let compute nodes come and go.
 That is why they can scale storage and query power independently, and
 why “the disk on this VM died” is a different failure than it used to be.
 
-Kubernetes (see [k8s-workshop](../../k8s-workshop)) is *how you place
+Kubernetes is *how you place
 processes*. It does not replace the data-system trade-offs in this
 chapter.
 
@@ -109,9 +109,9 @@ Each participant is a **node**. You might distribute because:
 
 - The problem is already distributed (two users on two phones).
 - Cloud services and microservices *are* a network (data lives in
-  service A, processing in service B).
+ service A, processing in service B).
 - You want **fault tolerance** (one machine dying is not the product
-  dying) or **geo latency** (data near the user).
+ dying) or **geo latency** (data near the user).
 - One machine is not big enough.
 
 The book’s warning, which this workshop will repeat: **do not distribute
@@ -154,28 +154,18 @@ Before you draw boxes, say out loud:
 - Is the store a **system of record** or a **derived** view?
 - Are we paying for **elasticity**, or do we have steady load and ops skill?
 - Do we *need* more than one node, and for which of: size, fault
-  tolerance, geo?
+ tolerance, geo?
 - What personal data is in the request, and what is the deletion story?
 
 If you cannot answer those, you are not ready to choose Kafka vs Postgres.
 
-## Ties to other workshops
-
-- [mongo-wokshop](../../mongo-wokshop/1-setup/COMPARISSION.md) — picking a
-  store by data model, not by fashion.
-- [kafka-workshop](../../kafka-workshop) — a derived-data / log backbone,
-  not a system of record for account balances unless you design it that
-  way on purpose.
-- [k8s-workshop](../../k8s-workshop) — runtime for the processes; not a
-  database.
-
 ## Check yourself
 
 1. Give one example from a product you know of an OLTP query and an OLAP
-   query on *related* data. Why should they not share one box?
+ query on *related* data. Why should they not share one box?
 2. When is self-hosting the cheaper, more honest choice?
 3. Name two reasons to distribute that are *not* “the data does not fit.”
 4. Why is “append-only log” in tension with “user asked us to delete
-   their data”?
+ their data”?
 
 Continue to [Defining nonfunctional requirements](../2-nonfunctional-requirements/).

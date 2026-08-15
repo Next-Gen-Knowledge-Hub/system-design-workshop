@@ -56,9 +56,9 @@ People say “latency” and mean three different things.
 
 - **Latency** is how long a thing sits waiting (queueing, network).
 - **Response time** is what the client actually feels: waiting + service
-  time + client overhead. That is the number users care about.
+ time + client overhead. That is the number users care about.
 - **Throughput** is how many requests (or bytes, or records) per second
-  the system can complete.
+ the system can complete.
 
 Averages lie. A mean of 50 ms can hide a p99 of 2 s, and humans remember
 the slow ones. The book wants you to talk in **percentiles**: p50
@@ -117,12 +117,12 @@ predictable way?”
 Three classic hardware stories:
 
 - **Shared memory** — one box, many CPUs, one RAM. Vertical scale.
-  Simple. Ceiling.
+ Simple. Ceiling.
 - **Shared disk** — several machines, one SAN. Some databases still
-  look like this.
+ look like this.
 - **Shared nothing** — each node has its own CPU, RAM, disk; they
-  coordinate over the network. This is how most large data systems
-  scale (sharding, ch. 7).
+ coordinate over the network. This is how most large data systems
+ scale (sharding, ch. 7).
 
 Principles you will reuse: split work into independent pieces (shards,
 partitions, consumers in a group), avoid single hot keys, scale *the
@@ -134,15 +134,15 @@ microservices”; it was “one user has 30 million followers.”
 Three faces, all boring, all what actually kills systems:
 
 - **Operability** — can ops see health, restore from backup, rotate
-  certs, understand a graph without reading the original author’s
-  mind?
+ certs, understand a graph without reading the original author’s
+ mind?
 - **Simplicity** — accidental complexity (clever caches, hidden
-  coupling) vs essential complexity (the domain really is hard).
-  Good abstractions hide the first without lying about the second.
+ coupling) vs essential complexity (the domain really is hard).
+ Good abstractions hide the first without lying about the second.
 - **Evolvability** — can we change the product? Irreversible moves
-  (a one-way database migration with no dual-write period) make
-  evolution expensive. Chapter 5 is largely about making change
-  *reversible* at the byte level (compatibility).
+ (a one-way database migration with no dual-write period) make
+ evolution expensive. Chapter 5 is largely about making change
+ *reversible* at the byte level (compatibility).
 
 The rest of DDIA is a catalog of building blocks that have survived
 contact with production. Use them so you are not inventing a unique
@@ -155,26 +155,18 @@ A credible design states:
 - Load: “~50k writes/s, ~500k reads/s, 1 KB payloads, 100:1 read/write.”
 - Latency: “p99 200 ms for the read path; writes can be 1 s.”
 - Failure: “survive one AZ; lost writes after failover: none / 1 s of
-  async replica lag.”
+ async replica lag.”
 - Evolution: “we will dual-write for two weeks.”
 
 If those lines are missing, the boxes on the whiteboard are decoration.
-
-## Ties to other workshops
-
-- [kafka-workshop](../../kafka-workshop/4-cluster-administration/MONITORING.md)
-  — lag, under-replicated partitions: operability in practice.
-- [distributed-systems-workshop](../../distributed-systems-workshop/1-foundations/)
-  — crash, delay, pause, clock drift as the four faults Joshi names;
-  this chapter is the *requirements* view of the same world.
 
 ## Check yourself
 
 1. Why is p99 more honest than average response time for a user-facing API?
 2. Fan-out on write vs fan-out on read: which load parameter explodes in
-   each, and how would you mix them for a celebrity?
+ each, and how would you mix them for a celebrity?
 3. Give a software fault that replication *cannot* fix.
 4. What would you put in an SLO for a payments authorize endpoint vs a
-   “export my data” endpoint?
+ “export my data” endpoint?
 
 Continue to [Data models and query languages](../3-data-models/).

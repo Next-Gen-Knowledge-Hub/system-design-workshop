@@ -5,16 +5,13 @@ Companion notes for **Chapter 12** of *Designing Data-Intensive Applications*
 keep arriving. A stream processor is a batch job that never finishes,
 which changes time, state, and failure.
 
-This is the DDIA theory behind
-[kafka-workshop](../../kafka-workshop). Read them together.
-
 ## What this chapter is for
 
 Streams are how you:
 
 - Move data between systems continuously (not a nightly dump).
 - Keep **derived** stores (search, cache, analytics, ML features) nearly
-  fresh.
+ fresh.
 - React to patterns (“this card was used in two countries in 10 minutes”).
 
 The input is **unbounded**. You never “rerun the whole file” unless you
@@ -46,8 +43,8 @@ Use this when the stream *is* data: activity events, CDC, event
 sourcing, several independent consumers (search indexer, warehouse
 loader, fraud, notifications) each with their own offset.
 
-[kafka-workshop overview](../../kafka-workshop/1-setup/OVERVIEW.md)
-is the worked example.
+A partitioned, durable log (Kafka is the common industrial form) is the
+worked example of this model.
 
 ## Databases and streams
 
@@ -103,8 +100,8 @@ in a local RocksDB (LSM, ch. 4) next to the operator.
 checkpoint and **rewind the log** to that offset. Exactly-once *inside
 the engine* is “replay + idempotent state updates + transactional
 sinks.” End-to-end exactly-once with an external DB still needs
-idempotent writes or a transactional protocol
-([kafka exactly-once](../../kafka-workshop/3-internals-and-reliability/RELIABILITY.md)).
+idempotent writes or a transactional protocol (for example Kafka
+transactions plus an idempotent sink).
 At-least-once + idempotent handlers is the design you can actually
 explain in an interview.
 
@@ -114,22 +111,16 @@ explain in an interview.
 - Activity pipeline, search indexer, fraud: log-based broker.
 - “Keep Elasticsearch in sync”: CDC, not dual write.
 - Metrics per minute: windowed aggregation; say event time + watermark.
-- Capstone shape: see
-  [kafka order pipeline](../../kafka-workshop/8-capstone-order-pipeline/).
-
-## Ties to other workshops
-
-- Almost all of [kafka-workshop](../../kafka-workshop), especially
-  [stream concepts](../../kafka-workshop/6-stream-processing/CONCEPTS.md).
-- [WAL / segmented log](../../distributed-systems-workshop/2-replication/README_Log.md)
+- End-to-end sketch: produce to a partitioned log, process with rewindable
+ offsets, write an idempotent sink (or a transactional outbox).
 
 ## Check yourself
 
 1. Why does deleting a message on ack make a new analytics consumer
-   unable to catch up?
+ unable to catch up?
 2. Dual-write vs CDC: which failure mode does CDC remove?
 3. Event time vs processing time for “orders in the last 5 minutes”
-   during a consumer lag spike.
+ during a consumer lag spike.
 4. What do you store in operator state for a stream–table join?
 
 Continue to [A philosophy of streaming systems](../13-streaming-philosophy/).

@@ -64,7 +64,7 @@ phone updates when the view updates, and still works offline if you
 designed for it.
 
 **Observing derived state:** watches, websockets, query-then-subscribe.
-Joshi’s **State Watch** is the coordination-service version; here it
+**State watch / query-then-subscribe** is the coordination-service version; here it
 is the product version.
 
 ## Aiming for correctness
@@ -102,22 +102,15 @@ A strong end-to-end design:
 
 That list is more impressive in an interview than a dozen product logos.
 
-## Ties to other workshops
-
-- [kafka capstone](../../kafka-workshop/8-capstone-order-pipeline/) —
-  orders → inventory → notifications as dataflow.
-- [Idempotent Receiver](../../distributed-systems-workshop/2-replication/README_ClientHandling.md)
-- CDC discussion in [ch. 12](../12-stream-processing/)
-
 ## Check yourself
 
 1. Why is “write Postgres, write Elastic in the same request” not
-   unbundling, and what goes wrong?
+ unbundling, and what goes wrong?
 2. Give a constraint you would check asynchronously, and how the user
-   sees a failure.
+ sees a failure.
 3. Timeliness vs integrity for a wallet balance vs a “people also
-   bought” widget.
+ bought” widget.
 4. How does replay give you evolvability (ch. 2 / 5) that dual-write
-   does not?
+ does not?
 
 Continue to [Doing the right thing](../14-doing-the-right-thing/).
