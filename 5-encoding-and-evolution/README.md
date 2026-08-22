@@ -14,7 +14,9 @@ works if:
 
 - **Backward compatibility** — new code can read old data.
 - **Forward compatibility** — old code can read (or at least tolerate)
- new data, usually by ignoring unknown fields.
+ new data, usually by ignoring unknown fields. if the record is decoded
+ into a model object that does not explicitly preserve unknown fields, the
+ new field can be silently lost (data loss risk).
 
 Every encoding format either helps you here or sets a trap.
 
@@ -30,7 +32,9 @@ is the default for HTTP APIs. Costs: verbose, ambiguous numbers
 (integers vs floats vs 64-bit ids that JavaScript cannot hold), no
 native binary, CSV’s quoting hell. Compatibility is *how you use it*:
 never reuse a field for a new meaning; add fields; be liberal about
-unknown keys.
+unknown keys. this encoding schema's are not backward neigher forward
+compatible, doesn't designed for that purpose. drops unknown fields and
+coudn't reuse fields for different meanings.
 
 **Binary JSON cousins** (MessagePack, BSON, CBOR): smaller, still
 schemaless.
@@ -40,6 +44,8 @@ schemaless.
 - **Protobuf / Thrift:** field numbers. Add optional fields with new
  numbers; old readers skip unknown numbers. Do not change types in
  place. Generated code in many languages. gRPC rides on Protobuf.
+ fully backward and forward compatible, old versions discard and don't modify
+ new data, and new versions could read and modify old data.
 - **Avro:** schema on write, often with a **schema registry**. Especially
  at home in Hadoop/Kafka land. Writer schema + reader schema are
  resolved against each other; that resolution *is* the compatibility
