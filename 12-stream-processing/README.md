@@ -11,7 +11,7 @@ Streams are how you:
 
 - Move data between systems continuously (not a nightly dump).
 - Keep **derived** stores (search, cache, analytics, ML features) nearly
- fresh.
+  fresh.
 - React to patterns (“this card was used in two countries in 10 minutes”).
 
 The input is **unbounded**. You never “rerun the whole file” unless you
@@ -22,105 +22,158 @@ kept the log and can **replay**.
 ### Messaging systems (AMQP / JMS style)
 
 A broker **assigns messages to consumers**. When a consumer acks, the
-message is **deleted**. Good as **async RPC** / task queue (work items,
-emails). Bad if you needed to:
+message is often **deleted** (or marked done). Good as **async RPC** /
+task queue: emails, thumbnail jobs, “call this webhook.” Competing
+consumers scale workers; they scramble global order.
+
+Weak when you needed to:
 
 - Replay last week after a bug.
-- Let a new consumer see history.
-- Keep a strict global order.
+- Let a **new** consumer see history.
+- Keep a strict order across the whole topic.
 
-Competing consumers scale workers; they scramble order.
+Some brokers offer retention; the classic mental model is still “queue
+of work items,” not “system of record.”
 
 ### Log-based message brokers
 
-Kafka, Pulsar, Kinesis-like: a **sharded append log**. Messages stay on
-disk for a retention period (or compacted). Consumers **checkpoint an
-offset**. Order is **per partition**. Parallelism = partitions (ch. 7).
-This is a cousin of the replication log (ch. 6) and LSM segments (ch. 4),
-and it is a form of consensus on the log (ch. 10).
+Kafka, Pulsar, Kinesis-like systems: a **sharded append-only log**.
+Messages stay for a retention period (or until compacted). Consumers
+**checkpoint an offset**. Order is **per partition**. Parallelism =
+partition count (ch. 7).
+
+This is a cousin of the replication log (ch. 6) and LSM segments
+(ch. 4), and leaders per partition sit near consensus ideas (ch. 10).
 
 Use this when the stream *is* data: activity events, CDC, event
 sourcing, several independent consumers (search indexer, warehouse
-loader, fraud, notifications) each with their own offset.
+loader, fraud, notifications) each with their own offset. A new
+consumer can rewind. A buggy consumer can fix code and reprocess.
 
-A partitioned, durable log (Kafka is the common industrial form) is the
-worked example of this model.
+**Compaction:** keep the latest value per key (changelog). Replay
+becomes snapshot-ish + tail — the same shape as a replicated state
+feed.
 
 ## Databases and streams
 
 If the OLTP database is the system of record, other systems need its
-changes.
+changes — continuously.
 
-**Dual write** (app writes DB *and* Kafka) looks easy and **loses**
-consistency: one of the two writes fails, or they reorder. Don’t.
+### Keeping systems in sync
 
-**Change data capture (CDC):** tail the database’s replication log,
-emit a changelog. Debezium-style. The log is the truth; the stream is a
-copy. **Log compaction** (keep the latest value per key) makes the
-stream replayable as a snapshot + tail — Kafka compacted topics,
-changelog streams in Kafka Streams.
+**Dual write** (app writes DB *and* Kafka in one request) looks easy and
+**loses** consistency: one of the two writes fails, or they reorder, or
+the process dies between them. Don’t.
 
-**Event sourcing** (ch. 3): the log *is* the system of record; the SQL
-table is derived. CDC is the shy version: the table stays the record,
-the log is extracted.
+Better patterns: **CDC**, or **transactional outbox** (business rows +
+outbox row in one DB transaction; publisher drains outbox). Both make
+the database commit the source of truth for “this change exists.”
 
-**Immutability:** an event happened. Corrections are new events, not
-edits in the middle of history (except GDPR — ch. 1 / 14 — which
-forces tombstones / crypto-erase / rewrite policies).
+### Change data capture
 
-Keeping caches, search, and warehouses in sync is then: **consume the
-changelog, apply.** Rebuild = replay from the start (or from a
-snapshot). That is the “Unix pipeline” of ch. 11, left running.
+Tail the database’s replication / WAL log, emit a changelog (Debezium-
+style connectors are the common industrial form). The log is extracted
+from what the DB already durable-wrote for replication (ch. 6).
+
+CDC turns “keep Elastic / cache / warehouse honest” into **consume and
+apply**. Rebuild = replay from a snapshot + log, or from a compacted
+topic.
+
+### State, streams, and immutability
+
+**Event sourcing** (ch. 3): the log *is* the system of record; tables
+are derived. CDC is the shy version: the table stays the record, the
+log is extracted.
+
+**Immutability:** an event happened. Corrections are new events (or
+tombstones), not silent edits in the middle of history — except when
+law forces erasure (ch. 14), which needs an explicit tombstone /
+crypto-shred / rewrite policy.
+
+Immutability also helps concurrency: streams define an order per shard;
+consumers apply in that order. Multi-shard facts need extra care
+(ch. 13).
 
 ## Processing streams
 
-**Uses:** CEP (pattern detection), windowed analytics (count per minute),
-materialized views (keep a table up to date), joining streams to
-tables (enrich order with user).
+### Uses of stream processing
 
-**Time:** **event time** (when it happened in the world) vs **processing
-time** (when your job saw it). They diverge. Late events (**stragglers**)
-arrive after you already closed a window. Watermarks are a bet: “we
-think we have seen everything up to T.” Too aggressive, you miss; too
-relaxed, you wait.
+- Complex event processing / pattern detection (fraud, ops alerts).
+- Windowed analytics (count per minute, rolling unique users).
+- Materialized views (keep a query result up to date as events arrive).
+- Enrichment (order event + current user profile).
+- Feeding search, caches, and feature stores with low delay.
 
-**Windows:** tumbling, hopping, sliding, session. Always say which
-clock.
+### Reasoning about time
 
-**Stream joins:**
+**Event time** — when it happened in the world (embedded in the
+payload). **Processing time** — when your operator saw it. They diverge
+under lag, retries, and partitions.
 
-- Stream–stream (two event types in a window).
-- Stream–table (event + current user profile).
-- Table–table as two changelogs.
+**Late events (stragglers)** arrive after you thought a window was
+closed. **Watermarks** are a bet: “we believe we have seen everything
+with event time ≤ T.” Too aggressive → wrong aggregates; too relaxed →
+high latency. Always say which clock a window uses.
 
-The table in stream land is a **changelog compacted to state**, often
-in a local RocksDB (LSM, ch. 4) next to the operator.
+**Windows:** tumbling, hopping / sliding, session. Session windows
+follow gaps in activity, not fixed walls.
 
-**Fault tolerance:** if an operator dies, restore **state** from a
-checkpoint and **rewind the log** to that offset. Exactly-once *inside
-the engine* is “replay + idempotent state updates + transactional
-sinks.” End-to-end exactly-once with an external DB still needs
-idempotent writes or a transactional protocol (for example Kafka
-transactions plus an idempotent sink).
-At-least-once + idempotent handlers is the design you can actually
-explain in an interview.
+### Stream joins
+
+| Kind | Picture | State you keep |
+|---|---|---|
+| Stream–stream | Two event types in a time window | Events in the window |
+| Stream–table | Event + current dimension row | Table as compacted changelog |
+| Table–table | Two evolving relations | Both changelogs |
+
+The “table” in stream land is often a **changelog compacted into local
+state** (RocksDB / LSM beside the operator — ch. 4). Partitioning must
+align join keys or you shuffle.
+
+### Fault tolerance
+
+If an operator dies:
+
+1. Restore **operator state** from a checkpoint / savepoint.
+2. **Rewind** the source log to the matching offset.
+3. Replay; side effects must be **idempotent** or transactional.
+
+“Exactly-once” *inside* the engine means: replay + idempotent state
+updates + transactional sinks (or equivalent). **End-to-end**
+exactly-once with an external database still needs idempotent writes,
+dedupe keys, or a transactional protocol (Kafka transactions + careful
+sinks; or outbox patterns from ch. 8).
+
+In interviews, **at-least-once + idempotent handlers** is the design
+you can defend. Exactly-once is a property you name with its boundary
+(which systems are inside the fence).
 
 ## How this shows up when you design something
 
-- Notifications: task queue (AMQP style) is enough if you don’t replay.
-- Activity pipeline, search indexer, fraud: log-based broker.
-- “Keep Elasticsearch in sync”: CDC, not dual write.
-- Metrics per minute: windowed aggregation; say event time + watermark.
-- End-to-end sketch: produce to a partitioned log, process with rewindable
- offsets, write an idempotent sink (or a transactional outbox).
+- Notifications / emails: task queue may be enough if you will never
+  replay.
+- Activity pipeline, search indexer, fraud, warehouse tail: log-based
+  broker.
+- “Keep Elasticsearch in sync”: CDC or outbox, not dual write.
+- Metrics per minute: windowed aggregation; say event time + watermark
+  policy.
+- End-to-end sketch: produce to a partitioned log → process with
+  rewindable offsets → idempotent sink (or transactional outbox).
 
 ## Check yourself
 
 1. Why does deleting a message on ack make a new analytics consumer
- unable to catch up?
+   unable to catch up?
 2. Dual-write vs CDC: which failure mode does CDC remove?
 3. Event time vs processing time for “orders in the last 5 minutes”
- during a consumer lag spike.
+   during a consumer lag spike — which clock should the window use?
 4. What do you store in operator state for a stream–table join?
+5. At-least-once delivery + non-idempotent “insert payment” handler:
+   what goes wrong on replay?
+6. Why is order guaranteed per Kafka partition but not across the
+   topic?
+7. Log compaction: what is preserved, what is gone, and who wants it?
+8. Watermark too far ahead vs too far behind: which error do you get
+   in each case?
 
 Continue to [A philosophy of streaming systems](../13-streaming-philosophy/).

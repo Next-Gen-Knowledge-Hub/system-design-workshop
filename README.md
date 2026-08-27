@@ -57,37 +57,39 @@ This repository contains the following topics
 **Part C — Distributed data (the heart of system design)**
 
 6. [Replication](./6-replication/) — DDIA ch. 6
- - Single-leader, multi-leader, leaderless
- - Lag, conflicts, sync engines / local-first
+ - Single-leader (sync/async, failover, fencing, replication logs)
+ - Lag and session guarantees; multi-leader; sync engines / local-first
+ - Leaderless quorums, conflicts, version vectors
 7. [Sharding](./7-sharding/) — DDIA ch. 7
  - Hash vs range, hot spots, rebalancing, request routing
- - Local vs global secondary indexes
+ - Multitenancy; local vs global secondary indexes
 8. [Transactions](./8-transactions/) — DDIA ch. 8
- - ACID, isolation levels, serializability
- - Distributed transactions and 2PC
+ - ACID; read committed, snapshot, write skew, lost updates
+ - Serializability (serial exec, 2PL, SSI); 2PC and exactly-once
 9. [The trouble with distributed systems](./9-distributed-trouble/) — DDIA ch. 9
- - Networks, clocks, pauses, quorums, Byzantine faults
- - System models, formal methods, randomized testing
+ - Partial failure; networks, timeouts, clocks, process pauses
+ - Quorums, fencing, Byzantine faults; formal methods / Jepsen
 10. [Consistency and consensus](./10-consistency-and-consensus/) — DDIA ch. 10
- - Linearizability, logical clocks, ID generation
- - Consensus, coordination services
+ - Linearizability (cost, CAP); logical clocks and ID generators
+ - Consensus, replicated logs, coordination services (etcd/ZK)
 
 **Part D — Derived data (how systems stay in sync without one giant DB)**
 
 11. [Batch processing](./11-batch-processing/) — DDIA ch. 11
- - Unix tools → MapReduce → dataflow engines
- - ETL, analytics, ML, serving derived data
+ - Unix pipelines; object stores; orchestration vs schedulers
+ - MapReduce → dataflow; shuffle/skew; ETL, ML, serving views
 12. [Stream processing](./12-stream-processing/) — DDIA ch. 12
- - Message brokers vs log-based brokers
- - CDC, time, joins, fault tolerance
+ - Queues vs log-based brokers; CDC vs dual-write
+ - Event time, watermarks, joins, exactly-once boundaries
 13. [A philosophy of streaming systems](./13-streaming-philosophy/) — DDIA ch. 13
- - Unbundling the database
- - End-to-end correctness without 2PC everywhere
+ - Derive don’t dual-write; batch+stream; unbundling the DB
+ - End-to-end idempotency, async constraints, trust-but-verify
 
 **Part E — Responsibility**
 
 14. [Doing the right thing](./14-doing-the-right-thing/) — DDIA ch. 14
- - Predictive analytics, privacy, law
+ - Predictive bias, accountability, feedback loops
+ - Privacy, surveillance, erasure vs logs, law
 
 **Part F — Coming later (not DDIA)**
 

@@ -53,6 +53,7 @@ Riccomini). This is a study aid, not a copy of the book.
 |---|---|---|
 | Single-leader, sync | Stronger durability | Leader wait; write unavailable if follower down |
 | Single-leader, async | Fast writes | Lag; failover can lose acknowledged writes |
+| Failover without fencing | — | Split-brain: two leaders, diverging data |
 | Multi-leader | Write locally in several regions | Conflict resolution, causality bugs |
 | Leaderless (quorum) | Survives some nodes down | Last-write-wins or siblings; not linearizable by default |
 
@@ -61,7 +62,9 @@ Riccomini). This is a study aid, not a copy of the book.
 | Scheme | Good at | Bad at |
 |---|---|---|
 | Hash of key | Even load, simple point gets | Range scans fan out |
-| Key range | Range queries, locality | Hot ranges (celebrity keys) |
+| `hash % node_count` | Looks simple | Adding a node reshuffles almost every key |
+| Fixed shard count / consistent hash | Grow by moving whole shards | Must pick a shard count (or ring) you can live with |
+| Key range | Range queries, locality | Hot ranges (celebrity keys, sequential ids) |
 | Local secondary index | Writes stay on one shard | Query fans out to every shard |
 | Global secondary index | Query hits few shards | Writes touch many shards; often async |
 
@@ -72,7 +75,9 @@ Riccomini). This is a study aid, not a copy of the book.
 | Read committed | Dirty reads/writes | Read skew, lost updates, write skew |
 | Snapshot isolation | Read skew, most phantoms | Write skew (often); lost updates depend on impl |
 | Serializable (2PL / SSI / serial exec) | The anomalies in the table | Throughput / latency cost; 2PL stalls |
-| Cross-system 2PC | Atomic commit across participants | Coordinator blocking, operational pain |
+| Cross-system XA 2PC | Atomic commit across products | Coordinator blocking; avoid as a habit |
+| DB-internal distributed txn | Cross-shard atomicity in one product | Cross-shard latency |
+| Outbox + idempotent consume | Exactly-once side effects without XA | Async lag; you own dedupe keys |
 
 ## Distributed reality (ch. 9–10)
 
@@ -82,6 +87,8 @@ Riccomini). This is a study aid, not a copy of the book.
 | Wall clocks order events | NTP steps, pauses, unbounded skew |
 | A lock in Redis is enough | Need fencing tokens or you get zombies |
 | Replication looks linearizable | Only if the algorithm actually is (usually consensus) |
+| Linearizable everything | Geo cost; refuse ops in a minority partition |
+| 50-node etcd for user traffic | Consistent core stays small (3–5 voters) |
 
 ## Derived data (ch. 11–13)
 
@@ -89,7 +96,10 @@ Riccomini). This is a study aid, not a copy of the book.
 |---|---|---|
 | Batch | Rerun the job, debug, backfill | Too slow for "now" |
 | Stream | — | Continuously update derived views |
-| Dual (Kappa / batch+stream) | Recompute when logic changes | Two pipelines to keep equivalent |
+| Dual write app→DB and app→Kafka | Looks simple | Split brain on partial failure |
+| CDC / outbox from system of record | One truth; replayable | Pipeline lag; schema evolution |
+| Dual (lambda batch+stream) | Recompute when logic changes | Two pipelines to keep equivalent |
+| Kappa (replay the log) | One codepath | Log must be rich enough to rebuild |
 
 Continue with the chapter folders in order, starting at
 [ch. 1](./1-architecture-tradeoffs/).
