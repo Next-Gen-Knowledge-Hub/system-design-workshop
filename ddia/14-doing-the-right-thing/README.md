@@ -156,7 +156,7 @@ p99 latency. If it is ads/tracking, mention minimization and purpose.
 
 This is the last DDIA chapter in the workshop.
 
-Next (later): [Interview-style system designs](../15-interview-designs/)
-and [Further reading](../16-further-reading/).
-The [trade-offs cheat sheet](../DESIGN_TRADEOFFS.md) is there when you
+Next (later): [Interview-style system designs](../../15-interview-designs/)
+and [Further reading](../../16-further-reading/).
+The [trade-offs cheat sheet](../../DESIGN_TRADEOFFS.md) is there when you
 want the whole book on one screen.

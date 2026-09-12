@@ -1,11 +1,14 @@
 # Design trade-offs cheat sheet
 
-A one-screen reminder of the choices DDIA spends chapters on. Use this when
-you are sketching a design and need to name the cost of each pick. Details
-live in the chapter folders.
+A one-screen reminder of the choices the two books spend chapters on.
+DDIA tables name the cost of a *data-system* pick. Hard Parts tables
+(at the bottom) name the cost of a *service-seam* pick. Do not fuse a
+row from one book into a chapter of the other. Details:
+[`INDEX.md`](./INDEX.md).
 
 Source: *Designing Data-Intensive Applications*, 2nd ed. (Kleppmann &
-Riccomini). This is a study aid, not a copy of the book.
+Riccomini) and *Software Architecture: The Hard Parts* (Ford, Richards,
+Sadalage, Dehghani). This is a study aid, not a copy of either book.
 
 ---
 
@@ -101,5 +104,104 @@ Riccomini). This is a study aid, not a copy of the book.
 | Dual (lambda batch+stream) | Recompute when logic changes | Two pipelines to keep equivalent |
 | Kappa (replay the log) | One codepath | Log must be rich enough to rebuild |
 
-Continue with the chapter folders in order, starting at
-[ch. 1](./1-architecture-tradeoffs/).
+Continue with the DDIA folders in [`ddia/`](./ddia/), starting at
+[ch. 1](./ddia/1-architecture-tradeoffs/). Hard Parts starts at
+[hard-parts ch. 1](./hard-parts/1-no-best-practices/).
+
+---
+
+## Hard Parts (service seams — do not merge into the tables above)
+
+Source: *Software Architecture: The Hard Parts* (Ford, Richards,
+Sadalage, Dehghani, 2021). Same words as DDIA, different job: **where
+you cut**, not **how the engine replicates**. Details:
+[`INDEX.md`](./INDEX.md). Folders: [`hard-parts/`](./hard-parts/).
+
+### Coupling and the quantum (HP 2–3)
+
+| Choice | You gain | You pay |
+|---|---|---|
+| One quantum (one deployable, one data) | Simple ops, one transaction | Change and scale move together |
+| Many quanta | Independent deploy, scale, failure | Static + dynamic coupling across the wire |
+| Split services, keep one database | Looks like microservices | You did not split the quantum; the DB is still the unit |
+
+### Decomposition (HP 4–5)
+
+| Choice | You gain | You pay |
+|---|---|---|
+| Component-based extraction | Incremental; you can measure coupling | Slow; leftover shared kernel |
+| Tactical fork (copy the monolith, delete half) | Fast isolation | Two codebases to starve or merge later |
+
+### Operational data split (HP 6)
+
+| Choice | You gain | You pay |
+|---|---|---|
+| Keep the monolith DB | Joins, one backup | Schema change is a company meeting |
+| Split by data domain, then polyglot | Independent life cycle | Distributed access (HP 10) and ownership (HP 9) |
+
+DDIA [ch. 3](./ddia/3-data-models/) / [ch. 4](./ddia/4-storage-and-retrieval/) pick
+an *engine*. Hard Parts 6 decides *whether the engine is still shared*.
+
+### Granularity (HP 7)
+
+| Force that **splits** | Force that **joins** |
+|---|---|
+| Volatility, independent scale, fault isolation, security boundary, extension | Single DB transaction, chatty workflow, shared code, inseparable data |
+
+### Reuse (HP 8)
+
+| Pattern | You gain | You pay |
+|---|---|---|
+| Copy the snippet | No shared release | Drift |
+| Shared library | One fix | Version hell; deploy coupling |
+| Shared service | One runtime | Availability and latency on the critical path |
+| Sidecar / mesh | Cross-cutting without a domain service | Platform tax |
+
+### Ownership and "consistency" (HP 9–10)
+
+| Choice | You gain | You pay |
+|---|---|---|
+| Single owner of a table | Clear writes | Other services must ask or replicate |
+| Joint ownership | Teams unblocked | Who is allowed to write? |
+| Interservice call for a join | Fresh data | Runtime coupling, outages cascade |
+| Replicate a column / cache | Local reads | Staleness; invalidation |
+
+This is **not** DDIA replica consistency ([ch. 6](./ddia/6-replication/)) and
+**not** linearizability ([ch. 10](./ddia/10-consistency-and-consensus/)). It
+is "which service is allowed to `UPDATE` this row, and how do others
+see it?"
+
+### Workflow and sagas (HP 11–12)
+
+| Choice | You gain | You pay |
+|---|---|---|
+| Orchestrator | Visible state, easier timeout/compensate | Orchestrator is a coupling hub |
+| Choreography | No central boss | History is scattered; harder to debug |
+| Atomic saga (try to look like one commit) | Simpler mental model | Often a 2PC in disguise — see [DDIA 8](./ddia/8-transactions/) |
+| Eventual saga + compensations | Survives partial failure | You own the undo story |
+
+A saga is an **application protocol**. Isolation levels are a **database
+protocol**. Do not paste HP 12 into DDIA 8.
+
+### Contracts (HP 13) vs encoding (DDIA 5)
+
+| Choice | You gain | You pay |
+|---|---|---|
+| Strict schema (types, required fields) | Breaks at generate/build time | Change coordination |
+| Loose contract (schemaless bag) | Easy to add fields | Stamp coupling; consumers break in prod |
+| Fat event (stamp the world) | Consumer needs no extra calls | Bandwidth; accidental coupling to internals |
+
+DDIA 5 is **how bytes evolve** (Avro/Protobuf rules). Hard Parts 13 is
+**how much of the domain you leak** across a service boundary.
+
+### Analytical (HP 14) vs OLAP (DDIA 1, 11)
+
+| Choice | You gain | You pay |
+|---|---|---|
+| Central warehouse / lake | One place to query | Coupling every domain to a platform team |
+| Data mesh (domain-owned products) | Scale ownership | You now operate a mesh of products, not a lake ticket |
+
+---
+
+DDIA tables above still start at [ch. 1](./ddia/1-architecture-tradeoffs/).
+Hard Parts tables start at [hard-parts ch. 1](./hard-parts/1-no-best-practices/).

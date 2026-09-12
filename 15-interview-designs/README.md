@@ -3,7 +3,8 @@
 **This section is a placeholder.** We are not filling it yet.
 
 The spine of this workshop is *Designing Data-Intensive Applications*.
-Parts A–E (folders 1–14) stay aligned with that book. This folder is
+Parts A–E live in [`../ddia/`](../ddia/) (folders 1–14) and stay aligned
+with that book. This folder is
 where we will later add **timed, interview-shaped walkthroughs**: pick
 a product, state load numbers, draw the system of record vs derived
 stores, and argue the trade-offs using the vocabulary from DDIA.
@@ -19,13 +20,13 @@ replacement):
 
 Each future write-up should:
 
-1. Restate requirements the way [ch. 2](../2-nonfunctional-requirements/)
+1. Restate requirements the way [ch. 2](../ddia/2-nonfunctional-requirements/)
  taught (load, percentiles, failure).
-2. Pick models and stores with [ch. 3–5](../3-data-models/).
-3. Say replication / sharding / isolation out loud ([ch. 6–8](../6-replication/)).
-4. Mark what is linearizable vs eventual ([ch. 10](../10-consistency-and-consensus/)).
-5. Show the dataflow for derived data ([ch. 11–13](../11-batch-processing/)).
-6. Spend one paragraph on data about people ([ch. 14](../14-doing-the-right-thing/)).
+2. Pick models and stores with [ch. 3–5](../ddia/3-data-models/).
+3. Say replication / sharding / isolation out loud ([ch. 6–8](../ddia/6-replication/)).
+4. Mark what is linearizable vs eventual ([ch. 10](../ddia/10-consistency-and-consensus/)).
+5. Show the dataflow for derived data ([ch. 11–13](../ddia/11-batch-processing/)).
+6. Spend one paragraph on data about people ([ch. 14](../ddia/14-doing-the-right-thing/)).
 
 Until those notes exist, practice by taking any product you know and
 answering the **Check yourself** questions in chapters 1–14, then
