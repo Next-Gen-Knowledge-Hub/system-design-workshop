@@ -11,10 +11,6 @@ Parts* — lives in [`../hard-parts/`](../hard-parts/). Shared words
 (transaction, consistency, schema, workflow, OLAP) are **not** merged
 here. Use [`../INDEX.md`](../INDEX.md) when you need the other angle.
 
-Interview drills and leftover reading stay at the repo root:
-[section 15](../15-interview-designs/),
-[section 16](../16-further-reading/).
-
 If you have notes from the **2017 first edition**, chapter numbers
 moved. This track follows the **2026 second edition**. The mapping is
 in the workshop [`README.md`](../README.md).

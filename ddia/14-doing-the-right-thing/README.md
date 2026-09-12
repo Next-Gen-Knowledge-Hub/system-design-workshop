@@ -154,9 +154,9 @@ p99 latency. If it is ads/tracking, mention minimization and purpose.
 8. How do derived-data pipelines (ch. 13) help privacy if you design
    them that way — and how do they hurt if you do not?
 
-This is the last DDIA chapter in the workshop.
-
-Next (later): [Interview-style system designs](../../15-interview-designs/)
-and [Further reading](../../16-further-reading/).
+This is the last DDIA chapter in the workshop. Continue on the Hard
+Parts track at [no best practices](../../hard-parts/1-no-best-practices/)
+if you are splitting services next, or use the
+[topic index](../../INDEX.md) when you need one word from both books.
 The [trade-offs cheat sheet](../../DESIGN_TRADEOFFS.md) is there when you
-want the whole book on one screen.
+want both books on one screen.

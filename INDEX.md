@@ -37,8 +37,7 @@ Follow the link you need; do not collapse the folders into one note.
 ## Track A — *Designing Data-Intensive Applications* (by chapter)
 
 Folders 1–14 live in [`ddia/`](./ddia/). Headings in each `README.md` follow the
-2e chapter. Interview drills and other books: [15](./15-interview-designs/),
-[16](./16-further-reading/).
+2e chapter.
 
 ### DDIA 1 — Trade-offs in data systems architecture
 [`ddia/1-architecture-tradeoffs`](./ddia/1-architecture-tradeoffs/)

@@ -17,9 +17,6 @@ chapters — they **mention** the other track and send you there.
 
 Each book lives in its own track folder. DDIA chapters stay numbered
 1–14 **inside** `ddia/`. Hard Parts is 1–15 inside `hard-parts/`.
-Interview drills and leftover reading stay at the repo root as
-[section 15](./15-interview-designs/) and
-[section 16](./16-further-reading/).
 
 Each numbered folder is one chapter of that book: the topics from the
 chapter, rewritten as a human-friendly companion you can read after (or
@@ -34,11 +31,8 @@ git repo.
 The topic index for both books lives in [`INDEX.md`](./INDEX.md).
 Cross-cutting choices live in [`DESIGN_TRADEOFFS.md`](./DESIGN_TRADEOFFS.md).
 
-Interview drills (Xu) and other books in this field (Vitillo, Burns)
-remain later work in [section 15](./15-interview-designs/) and
-[section 16](./16-further-reading/). DDIA stays the data-systems spine;
-Hard Parts is the staff-level *split and reassemble* lens, not a
-replacement.
+DDIA stays the data-systems spine; Hard Parts is the staff-level *split
+and reassemble* lens, not a replacement.
 
 ## What this workshop assumes
 
@@ -145,11 +139,6 @@ This repository contains the following topics
 14. [Doing the right thing](./ddia/14-doing-the-right-thing/) — DDIA ch. 14
  - Predictive bias, accountability, feedback loops
  - Privacy, surveillance, erasure vs logs, law
-
-**Part F — Coming later (not DDIA, not Hard Parts)**
-
-15. [Interview-style system designs](./15-interview-designs/) — Xu Vol. 1 / Vol. 2 and our own designs
-16. [Further reading in this field](./16-further-reading/) — Vitillo, Burns, …
 
 ### Track B — Hard Parts (*Software Architecture: The Hard Parts*, 2021)
 
