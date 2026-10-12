@@ -1,200 +1,71 @@
-# 5. Component-based decomposition patterns
+# Component-based decomposition patterns
 
-Companion notes for **Chapter 5** of *Software Architecture: The Hard Parts*
-(Neal Ford, Mark Richards, Pramod Sadalage, and Zhamak Dehghani; O'Reilly,
-October 2021).
+Software Architecture: The Hard Parts, Ford, Richards, Sadalage, Dehghani, O'Reilly 2021, Chapter 5.
 
-Chapter 4 said you may choose component-based decomposition when the
-graph is visible enough to work. This chapter is **the sequence of
-moves** — not a pile of optional tricks. Skip it (or shuffle it) and
-you will extract the wrong grain, hide coupling in nested packages,
-and call a random cluster of classes a "domain service." The patterns
-exist to make a seam you could put in an ADR and a fitness function.
-They are still *code* moves; they do not split the database. That is
-[ch. 6](../6-operational-data/).
+## What the sequence is
 
-## The mental model
+Component-based decomposition is one pipeline. The moves run in order: identify and size components, gather common domain components, flatten components, determine component dependencies, create component domains, create domain services. Shuffling them, or skipping to a deployable, extracts the wrong grain, hides coupling inside nested packages, and names a random cluster of classes a domain service.
 
-```
-  1 identify + size          "what is a component here?"
-           |
-           v
-  2 gather common domain     shared nouns in one place, on purpose
-           |
-           v
-  3 flatten                  nested trees stop lying
-           |
-           v
-  4 dependencies             arrows, cycles, Ca/Ce at that grain
-           |
-           v
-  5 component domains        clusters that might become quanta
-           |
-           v
-  6 domain services          a deployable, if the driver still holds
-```
+The moves are code moves. They make a seam you can put in an ADR and a fitness function. An **ADR** is a short dated record of context, one decision, and consequences. A **fitness function** is an automated check that a claimed property still holds. The pipeline does not split the database.
 
-The one sentence to remember a year from now: **decomposition is a
-pipeline of visibility** — you size, gather, flatten, and map before
-you are allowed to mint a service.
+A **component** is a clump of code that changes for one reason and that you might one day deploy apart. A **quantum** is the smallest set of code and data that can be deployed independently and still hangs together. A component lives inside a quantum until a later move in this same sequence promotes a whole domain. Naming components does not claim independent deploy.
 
-Two consequences fall straight out of that diagram. First, jumping to
-step 6 because Kubernetes is ready produces a distributed monolith
-with extra YAML. Second, stopping at step 4 is still a win: you may
-have bought maintainability and testability inside one quantum
-([ch. 3](../3-modularity/)) without paying for a second database.
+**Static coupling** is visible without running the system: imports, shared types, shared tables, a library both sides compile against. **Dynamic coupling** is a runtime link you can document: a call or a message, who waits, who owns the payload. **Afferent coupling (Ca)** counts who depends on a component. **Efferent coupling (Ce)** counts who it depends on. A **boulder** is concrete and widely depended on (high Ca, low abstractness): the zone of pain. A **leaf** has high instability and low Ca. Instability is `I = Ce / (Ca + Ce)`.
 
-For each pattern below: the problem, what you do, a fitness function
-you could actually automate, and the failure if you skip it. Use the
-book's ticketing/field-ops case as a *label* for examples, not as a
-plot.
+Jumping to a domain service because Kubernetes is ready produces a distributed monolith with extra YAML. Stopping after the dependency map can still be a win: maintainability (a person can change one reason without touching the other) and testability (one part can be proven without the rest running) inside one quantum, without a second database.
+
+The examples use a field-ops product. Ticketing is intake, assignment, and dispatch. Nonticketing work is invoicing, tax, and parts. Both touch customers, sites, and `work_orders`.
 
 ## Identify and size components
 
-**Problem** — The unit of thought is wrong. Classes are too small to
-be architecture; "the application" is too big; folders are layers
-(`api/`, `domain/`, `infra/`) that cut across every change-reason.
-Nobody can answer "what would we extract?" without waving at a
-screen.
+The unit of thought is wrong when classes are the architecture, or "the application" is, or the folders are layers (`api/`, `domain/`, `infra/`) that cut across every change-reason. Nobody can point at what would be extracted.
 
-**What you do** — Name **components** at the grain a domain expert
-could point to: intake, assignment, dispatch, invoicing, inventory,
-notifications — not `InvoiceController` and not `helpers`. A
-component is a clump of code that changes for one reason and that
-you might one day deploy apart. Size it so that:
+Name components at the grain a domain expert would point to: intake, assignment, dispatch, invoicing, inventory, notifications. `InvoiceController` and `helpers` are the wrong names. Size the clump so that a single class or a single function does not become a nano-service that still chatters to everyone, and so that half the monolith is not one component that cannot move and cannot be tested as a piece.
 
-- Too small (a single class, a single function) will become a nano
-  "service" that still chatters to everyone.
-- Too large (half the monolith) will not move and cannot be tested
-  as a piece.
+A practical component is a package, module, or project whose name is a noun-verb the business uses, holding a handful of related types, with a test target that runs without booting the world. If the drawing has more boxes than about twenty, the list is files, not components.
 
-Practical tells: a package (or module, or project) whose name is a
-**noun-verb the business uses**, a handful of related types, and a
-test target you can run without booting the world. If you cannot
-draw twenty-or-fewer boxes, you have not identified components; you
-have listed files.
+A CI bound can check size: lines or type-count per component folder between a floor and a ceiling, or a rule that no component is a single class and none exceeds N types without an ADR. A weaker check still helps: every production package is registered in a component map, and an unknown package fails the build. That stops `misc/` from growing.
 
-Do not confuse this with [ch. 2](../2-coupling/) quanta. A component
-lives *inside* a quantum until much later in this sequence. You are
-labeling parts, not claiming independent deploy.
-
-**Fitness function** — Bounds on component size, checked in CI: e.g.
-lines or type-count per component folder between a floor and a
-ceiling; or "no component may be a single class, and none may exceed
-N types without an ADR." A weaker but useful check: every production
-package must be registered in a component map file; unknown packages
-fail the build (stops `misc/` from growing).
-
-**Failure if skipped** — You "split" at class grain and get a mesh of
-tiny deployables, or you split at layer grain and get
-`InvoiceController` talking across the network to `InvoiceService`.
-The later patterns will operate on ghosts. Production: a team
-extracts `PriceCalculator` as a service because it was a class they
-could find; every checkout now pays a hop, and tax still lives in
-three other classes they did not identify.
+On this product, assignment is a component. `PriceCalculator` is a class. Extracting the class because it was easy to find puts a network hop on every price, while tax still lives in three other classes that were never named. The later moves then operate on ghosts. The same miss at layer grain puts `InvoiceController` on the network talking to `InvoiceService`.
 
 ## Gather common domain components
 
-**Problem** — The same business noun is implemented in five places
-(`Customer`, `Address`, `Money`, `Site`) *or* dumped into a
-`common/` / `shared/` / `util/` junk drawer. You cannot see what is
-*truly* shared domain versus what was convenient to import.
+The same business noun is implemented in five places (`Customer`, `Address`, `Money`, `Site`), or it is dumped into `common/`, `shared/`, or `util/`. You cannot see what is truly shared domain and what was convenient to import.
 
-**What you do** — **Gather** the duplicated or scattered *domain*
-bits into explicit common-domain components — still inside the
-monolith. The point is not DRY as a virtue. The point is to make
-sharing *visible* so you can later decide, in
-[ch. 8](../8-reuse-patterns/) and [ch. 9](../9-data-ownership/):
-duplicate, library, or service. Until it is gathered, every future
-service will secretly depend on a helper nobody admitted was
-architecture.
+Gather the duplicated or scattered domain bits into explicit common-domain components, still inside the monolith. The point is to make sharing visible. Visible sharing can later be resolved as a duplicate, a library, or a service. Until it is gathered, every future service secretly depends on a helper nobody admitted was architecture. DRY, as a virtue by itself, is not the point.
 
-Rules of thumb while gathering:
+Technical utilities (string padding, a clock) are not domain components. Leave them out of the domain pile. Putting them in recreates the boulder: a concrete clump everyone depends on. A noun used by two workflows, such as customer or site, is a candidate to gather. Gathering it puts it on the map. Extracting it as a service is the zone-of-pain move. Stop adding random methods to the gathered component. Gathering conserves what is already shared. It is not a license to grow `SharedKernel`.
 
-- Technical utilities (string pad, clock) are not domain components.
-  Keep them out of the domain pile or you will recreate the boulder
-  from [ch. 4](../4-decomposition/).
-- A noun used by two workflows (customer, site) is a candidate.
-  Gathering it is not the same as *extracting* it as a service —
-  that is often the zone-of-pain move. You are putting it on the
-  map.
-- Stop adding random methods to the gathered component. Gathering
-  is a conservation move, not an invitation to grow `SharedKernel`.
+Fitness checks: detect the same record shape under three names, or allow domain types only under `components/<name>` or `components/common-domain/<name>`. Ban new types in `util/` that are not purely technical — a lint on package and name, or a denylist that includes words like `Customer` inside `util`. ArchUnit-style rules: `util` does not depend on domain packages, and domain packages do not reach each other through `util`.
 
-**Fitness function** — Duplicate-type detection (same record shape
-under three names) or a rule: domain types may live only under
-`components/<name>` or `components/common-domain/<name>`. Ban new
-types in `util/` that are not purely technical (lint on package +
-name heuristics, or a denylist of words like `Customer` in `util`).
-ArchUnit-style: `util` must not depend on domain packages, and
-domain packages must not reach into each other *through* `util`.
-
-**Failure if skipped** — The "common" jar becomes the real system.
-Every hoped-for service compiles against it; you have one quantum
-with extra logos. Or the opposite: you never gather, so the same
-`Status` enum forks six times and no workflow can parse another
-workflow's events. Production: identity "helpers" copied into eight
-services, then a GDPR deletion that updated only three.
+Skipped, the common jar becomes the real system. Every hoped-for service compiles against it: one quantum, with extra names on the boxes. Or the noun is never gathered, the same `Status` enum forks six times, and no workflow can parse another workflow's events. Identity helpers copied into eight services, then a GDPR deletion that updates three of them, is that incident.
 
 ## Flatten components
 
-**Problem** — Nested packages hide the graph. `company.app.billing.internal.impl.legacy.v2`
-looks hierarchical. The compiler sees a clique. Component-based work
-on a tree you made up is fiction: you will think invoicing depends
-on "billing" when it actually imports a class six levels down that
-imports dispatch.
+Nested packages hide the graph. `company.app.billing.internal.impl.legacy.v2` looks like a hierarchy. The compiler sees a clique. Work done on a tree you invented is fiction: invoicing appears to depend on "billing," and it actually imports a class six levels down that imports dispatch.
 
-**What you do** — **Flatten** so that components sit at one
-architectural level. Nesting for file navigation is fine;
-*component-of-component* as an architecture story is not. After
-flattening, the boxes you named in pattern 1 are the boxes you will
-draw arrows between in pattern 4.
+Flatten so components sit at one architectural level. Nesting for file navigation can stay. Component-of-component, told as the architecture, cannot. After this move, the boxes from the first pattern are the boxes the dependency map will use.
 
 ```
-  before (lie):                    after (visible):
+  before (the names lie)           after (the arrows are real)
   billing                          billing
-    +-- invoices                     invoicing
-    +-- tax                          tax
-         +-- rules                   dispatch   <-- now an arrow
-              +-- dispatch-hook        you can forbid
+    invoices                         invoicing
+    tax                              tax
+      rules                          dispatch
+        dispatch-hook                  an edge you can forbid
 ```
 
-You will find fake parents: an `ops` folder that contained both
-dispatch and invoicing because one team owned "operations." Flatten
-until the name matches a change-reason, not an org-chart fossil.
+Fake parents show up here. An `ops` folder held both dispatch and invoicing because one team owned "operations." Flatten until the name matches a change-reason. An org-chart fossil is not a component.
 
-**Fitness function** — Maximum package depth *for component roots*
-(e.g. component roots live at `components/<name>/...` and
-`<name>` is not allowed to contain another registered component).
-Or: a generated component graph has no containment edges, only
-dependency edges; a test fails if a new nested module is marked as
-a component.
+A fitness function caps depth for component roots: roots live at `components/<name>/...`, and `<name>` may not contain another registered component. Or the generated component graph has no containment edges, only dependency edges, and a test fails when a new nested module is marked as a component.
 
-**Failure if skipped** — Dependency maps look clean at the parent
-level while the nested code reintroduces cycles. You "create a
-domain service" that still *contains* the other domain. Production:
-`modules/field/` ships as one JAR because nobody flattened
-ticketing vs nonticketing; the service boundary is a zip file.
+Skipped, dependency maps look clean at the parent while nested code puts the cycles back. A domain service still *contains* the other domain. `modules/field/` ships as one JAR because ticketing and nonticketing were never flattened. The service boundary is a zip file.
 
 ## Determine component dependencies
 
-**Problem** — You still do not know who depends on whom at the grain
-you just flattened. Cycles, hidden static coupling, and
-"just one import" leaks are how chapter 4's Ca/Ce become surprises
-in week eight of an extraction.
+After the flatten, who depends on whom is still unknown. Cycles, hidden static coupling, and a single import become surprises in week eight of an extraction, which is when Ca and Ce were supposed to be obvious.
 
-**What you do** — Map **component dependencies** explicitly: compile
-time, and the cheap static stand-ins for data (which component
-touches which tables or types). Mark:
-
-- Direction (who owns the arrow).
-- Cycles (break or accept with an ADR; accepting a cycle *across* a
-  hoped-for service cut is how you fail).
-- Afferent vs efferent at this grain, so leaves and boulders are
-  obvious.
-
-This is chapter 4's metrics, now applied to the *named* components
-rather than to whatever the IDE called a module.
+Map component dependencies explicitly. Include compile time, and the cheap static stand-ins for data: which component touches which tables or types. Mark direction (who owns the arrow), cycles, and afferent versus efferent at this grain, so leaves and boulders are visible. The counts apply to the named components, not to whatever the IDE called a module.
 
 ```
   [intake] --> [assignment] --> [dispatch]
@@ -202,177 +73,71 @@ rather than to whatever the IDE called a module.
         \---- [notifications] ----/
                    |
                    v
-              [invoicing]     cycle? if invoicing --> assignment, stop
+              [invoicing]
 ```
 
-Break cycles *before* grouping domains. Typical moves: invert a
-dependency onto a contract (both depend on `TicketClosed`, neither
-on each other's internals); replace a call with an event you do not
-need answered; duplicate a tiny read model rather than importing a
-write model. Do not "break" a cycle by adding a third component that
-both import — that is how `common` becomes the boulder.
+If invoicing also points at assignment, stop. That cycle is not a legal service cut.
 
-**Fitness function** — ArchUnit / import-linter / dependency-cruiser:
-allowed edges live in a file; any other component-to-component
-import fails CI. Cycle detection is a red build, not a warning on a
-dashboard. Optional: a check that Ca of `common-domain` does not
-increase without an ADR.
+Break cycles before grouping domains. Invert a dependency onto a contract: both sides depend on `TicketClosed`, and neither depends on the other's internals. Replace a call with an event you do not need answered. Duplicate a tiny read model rather than importing a write model. Adding a third component that both sides import does not break the cycle. That third component is how `common` becomes the boulder.
 
-**Failure if skipped** — You extract along a cycle and buy a
-distributed deadlock: neither side can deploy, each waiting on the
-other's DTO. Production: "billing" and "tickets" services that must
-release in one CR because each still imports the other's package,
-now over the network as a required protobuf field.
+A cycle across a hoped-for service cut can be broken, or it can be accepted in an ADR. Accepting it, and extracting anyway, is how the cut fails.
+
+Fitness checks: ArchUnit, import-linter, or dependency-cruiser, with allowed edges in a file. Any other component-to-component import fails CI. Cycle detection is a red build, not a dashboard warning. Optionally, Ca of `common-domain` may not increase without an ADR.
+
+Skipped, extraction follows the cycle and buys a distributed deadlock: neither side can deploy, each waiting on the other's DTO. Billing and tickets must release in one change request because each still imports the other's package, now as a required protobuf field on the wire.
 
 ## Create component domains
 
-**Problem** — Forty honest components are not forty services, and they
-are not yet a decomposition target. Without clustering, someone will
-pick components at random ("notifications is small, extract that")
-and ignore that notifications is an *efferent spider* sitting on
-every workflow.
+Forty honest components are not forty services, and they are not yet a decomposition target. Without a cluster, someone extracts notifications because it is small, and misses that notifications is an efferent spider sitting on every workflow.
 
-**What you do** — Group components into **component domains**:
-clusters that share a change-reason and talk more *inside* the
-cluster than outside. This is adjacent to bounded-context thinking
-but stays operational: you are clustering for extraction, not
-redrawing the enterprise ontology.
+Group components into **component domains**: clusters that share a change-reason and talk more inside the cluster than outside. The clustering is for extraction. It stays operational. Redrawing an enterprise ontology is a different task. Bounded-context language is adjacent; the test here is the import cluster, not the ontology.
 
-In the book's ticketing/field-ops case as a label:
+On this product:
 
-- A **ticketing** domain might gather intake, assignment, dispatch.
-- A **nonticketing / commercial** domain might gather invoicing, tax,
-  parts.
-- **Notifications** might sit with the domain that *owns the moment*
-  (ticket closed vs invoice issued) rather than as a global dump.
+- A ticketing domain can gather intake, assignment, and dispatch.
+- A nonticketing, or commercial, domain can gather invoicing, tax, and parts.
+- Notifications sit with the domain that owns the moment — ticket closed, or invoice issued — rather than in a global dump.
 
-A component that every domain wants (identity, customer) is not "a
-domain called Shared." It is an unresolved ownership problem. Leave
-it marked. [Chapter 8](../8-reuse-patterns/) and
-[ch. 9](../9-data-ownership/) exist because this step will surface
-orphans. Do not "solve" them by extracting Shared as a service in
-this chapter.
+A component every domain wants, such as identity or customer, is an unresolved ownership problem. It is not "a domain called Shared." Leave it marked. This step surfaces those orphans. Extracting Shared as a service here is the boulder moved onto the network.
 
-**Fitness function** — Coupling *between* domains vs *inside*: e.g.
-a ratio of cross-domain imports to in-domain imports must stay
-below a threshold, or simply: no new edge between domain A and
-domain B except through an allowlist (published types/events). A
-build-time check that a component's package prefix matches its
-declared domain.
+A fitness function compares coupling between domains with coupling inside them: the ratio of cross-domain imports to in-domain imports stays under a threshold, or no new edge between domain A and domain B exists except through an allowlist of published types and events. A build check can require a component's package prefix to match its declared domain.
 
-**Failure if skipped** — "Services" that are grab-bags (whatever two
-engineers were working on that month). You did not decompose; you
-shuffled. Production: a `platform-service` that contains scheduling,
-PDF, and feature flags because those components were leftover after
-the "real" domains were named.
+Skipped, the "services" are grab-bags of whatever two engineers were working on that month. The parts were shuffled. A `platform-service` that contains scheduling, PDF generation, and feature flags is the leftover pile after the "real" domains were named.
 
 ## Create domain services
 
-**Problem** — Domains still live in one deployable. If a
-[ch. 3](../3-modularity/) driver truly needs independent deploy,
-test, scale, or failure isolation *as another quantum*, you still
-have only packages.
+Domains can still live in one deployable. A domain service exists when a driver truly needs another quantum: independent deploy, an isolated test, separate scale, or failure isolation. The drivers are the pains of change, test, release cadence, hardware, and blast radius. Packages alone do not buy those.
 
-**What you do** — Promote a **component domain** into a **domain
-service**: its own deliverable (process, pipeline, artifact). Rules
-that keep this from becoming a costume:
+Promote a component domain into a **domain service**: its own deliverable, with its own process, pipeline, and artifact. Three rules keep the promotion from being a costume.
 
-- No compile-time dependency on another domain's internals. Only
-  documented dynamic coupling ([ch. 2](../2-coupling/)).
-- You can ship it on a Tuesday without shipping the origin *as a
-  requirement*. If you cannot, it is still one quantum — maybe a
-  useful module, not a service.
-- Data may still be shared *for a while*. If so, the ADR must say
-  so, and you may not claim the availability driver is fully bought.
-  [Chapter 6](../6-operational-data/) is the next move, not an
-  implied bonus of this pattern.
+- No compile-time dependency on another domain's internals. The only coupling left is documented dynamic coupling.
+- It can ship on a Tuesday without shipping the origin as a requirement. If it cannot, it is still one quantum: a useful module, not a service.
+- Data may stay shared for a while. The ADR says so. The availability driver is not fully bought while that sharing remains. Splitting the operational data is a separate move. It is not included in this pattern.
 
-Start with a leaf domain (chapter 4: high I, low Ca), not with the
-boulder. Ticketing vs invoicing: extract the one whose graph is a
-leaf *and* whose driver is loud. If both are loud and both sit on
-`work_orders`, you do not have a domain service yet; you have a
-data problem.
+Start with a leaf domain: high I, low Ca. Extract the field-ops side whose graph is a leaf and whose driver is loud. If ticketing and invoicing are both loud, and both sit on `work_orders`, there is no domain service yet. There is a data problem.
 
-**Fitness function** — The new artifact's build forbids the old
-monolith as a library. Contract tests at the published edge. A
-release check: the service's pipeline can go to production while
-the origin's is red (at least in a non-prod environment, as a drill).
-Optional: runtime isolation probe — origin down, leaf domain still
-serves its read path, if that was the availability claim.
+Fitness checks: the new artifact's build forbids the old monolith as a library. Contract tests cover the published edge. A release drill shows the service pipeline reaching production while the origin pipeline is red, at least in a non-production environment. If the claim was availability, a runtime probe shows the origin down and the leaf domain still serving its read path.
 
-**Failure if skipped** — You stop at domains-in-packages and tell
-the business you "decomposed." Deployability and failure isolation
-did not move. Or you skip *to* this pattern: a new repo copied from
-trunk with all domains still inside — a fork without the earlier
-visibility. Production: "invoice-service" that cannot boot without
-the monolith module on the classpath, and a pager that still storms
-when reporting OOMs the origin.
+Stopping at domains-in-packages and telling the business the system was decomposed leaves deployability and failure isolation where they were. Skipping *to* this pattern — a new repository copied from trunk with every domain still inside — is a fork without the earlier visibility. An `invoice-service` that cannot boot without the monolith module on the classpath, and a pager that still storms when reporting exhausts memory in the origin, is that outcome.
 
-## Short summary of the sequence
+## After a fork, and what this sequence leaves open
 
-The six patterns are a **single method**. Skipping a step does not
-save time; it relocates the unknown.
+Tactical forking copies a slice and deletes toward something runnable. It postpones this pipeline. It does not replace it. After the fork, run the same six moves inside the copy. Otherwise two mudpiles are on the pager: duplicated bugs, and deploys that still have to line up because nobody flattened or broke the cycles in the copy. The fitness functions above are how the ADR shows up in CI.
 
-1. **Identify and size** — get a grain you could extract.
-2. **Gather common domain** — put shared nouns on the map so they
-   stop hiding in `util`.
-3. **Flatten** — make the graph two-dimensional.
-4. **Determine dependencies** — arrows, cycles, Ca/Ce; break what
-   the future cut cannot survive.
-5. **Create component domains** — cluster by change-reason, not by
-   leftover parts.
-6. **Create domain services** — only if a driver needs a new
-   quantum, and only for a leaf you can actually ship.
+You can stop after the dependency map, or after component domains, and keep an honest modular monolith. That is a valid end. The failure is a claim of a domain service while the dependency map still shows a cycle through a shared kernel.
 
-You can stop after 4 or 5 and still have a more honest modular
-monolith. That is a valid outcome of this chapter. The failure is
-not "we didn't get to Kubernetes." The failure is claiming a domain
-service while step 4 still shows a cycle through a shared kernel.
+Three decisions stay outside the pipeline. How small a service should be. How operational tables are split. Whether leftover common domain becomes a library or a sidecar. When gathering and clustering surface those questions, write them down. Turning `common` into a service does not answer them.
 
-Tactical forking from [ch. 4](../4-decomposition/) does not replace
-this sequence; it postpones it. After a fork, run the same six
-moves *inside* the copy so you are not staffing two mudpiles. The
-fitness functions above are how [ch. 1](../1-no-best-practices/)
-shows up as CI, not as a poster.
+## What goes wrong
 
-What this chapter does *not* do: pick service granularity (that is
-[ch. 7](../7-service-granularity/)), split operational data (ch. 6),
-or choose library vs sidecar for the leftover common domain
-(ch. 8). If those questions showed up while you gathered and
-clustered, write them down. Do not solve them by making `common` a
-service.
+- **Wrong grain.** Class-sized deployables chatter. Layer-sized cuts put a controller on the network in front of its own service. `PriceCalculator` as a service adds a hop, and the unnamed tax classes stay behind.
+- **Shared nouns left scattered or dumped in `util`.** One common jar is the real system, or one `Status` enum exists six times and events do not parse. A deletion rule updates three of eight copied identity helpers.
+- **Nesting left in place.** Parent-level maps look acyclic. `modules/field/` ships ticketing and nonticketing as one JAR.
+- **Cycles carried into the extract.** Neither side deploys. A required protobuf field forces one change request for billing and tickets. A new `common` component, added so both sides can import it, becomes the boulder.
+- **Domains that are leftovers.** Notifications extracted because they are small, while they call every workflow. A platform service holds scheduling, PDFs, and feature flags.
+- **A service announced too early.** The artifact cannot boot without the monolith on the classpath. Reporting still takes the origin down with it. Or the teams stop at packages and claim that deployability and failure isolation moved.
+- **A fork that never enters the pipeline.** Six months on, two copies diverge, fixes land once, and the release train has a second copy of itself.
 
-## Check yourself
+## Recap
 
-1. Why is a class the wrong grain for a component, and a technical
-   layer the other wrong grain? Give a production extract that
-   failed because of grain, and name the failure mode.
-2. You skip "gather common domain" and extract invoicing. Where does
-   `Customer` live the next morning, and what GDPR-shaped incident
-   does that setup cause?
-3. Flattening: describe a nested package in a repo you know that
-   *looks* like hierarchy and is actually a cycle. What fitness
-   function would have caught a new nested "component"?
-4. Draw (in words) three component arrows from a system you have
-   shipped. Where is the cycle you would have to break before a
-   domain service is legal?
-5. Why is "extract Shared / Common as the first domain service" the
-   zone-of-pain move from chapter 4 wearing chapter 5 clothing?
-6. Component domain vs domain service: you stop after clustering.
-   Which modularity drivers can improve, and which cannot, without
-   step 6?
-7. Pick a leaf you would promote first in the book's
-   ticketing/field-ops case (label only). What Ca/Ce evidence made
-   it a leaf, and what table would still make it one quantum?
-8. Write one automated fitness function for *two* different
-   patterns in this sequence. What skip-failure does each prevent
-   on the next "tiny helper" PR?
-9. A team forks (ch. 4) and never runs this sequence on the copy.
-   Six months later, what does on-call look like? Be specific about
-   duplication and deploys.
-10. Someone wants to jump to domain services because "the drivers
-    in chapter 3 are all red." Which single pattern in this chapter
-    would you force them to finish first, and why is that the
-    cheapest honest delay?
-
-Continue to [Pulling apart operational data](../6-operational-data/).
+Size components a domain expert would name, between a single class and half the system. Gather shared domain nouns into an explicit common-domain place, and keep technical utilities out of it. Flatten so each component is a root, not a child of another component. Record arrows, Ca, and Ce, and break cycles before any grouping that is meant to deploy apart. Cluster by change-reason into component domains, and leave identity and customer marked until someone owns them. Promote a leaf domain to its own artifact only when a driver needs another quantum, the build no longer links the monolith, and any shared tables are written down as still shared.

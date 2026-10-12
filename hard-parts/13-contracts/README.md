@@ -1,286 +1,89 @@
 # 13. Contracts
 
-Companion notes for **Chapter 13** of *Software Architecture: The Hard
-Parts* (Ford, Richards, Sadalage, Dehghani, 2021).
+These notes teach the seam between services — what a producer may say, and what a consumer may assume — from *Software Architecture: The Hard Parts* (Ford, Richards, Sadalage, Dehghani, 2021).
 
-You split the monolith. You named owners ([ch. 9](../9-data-ownership/)).
-You picked a workflow style ([ch. 11](../11-distributed-workflows/)).
-None of that survives contact with **the payload**. The contract is
-the seam: what a producer is allowed to say, and what a consumer is
-allowed to assume. Skip this chapter and you will "decouple" services
-that all break when Billing adds a field to a JSON blob they never
-read.
+## The payload is the coupling
 
-## See also (do not merge)
+Splitting a system names owners and picks a workflow style. The design still dies in the payload. Billing adds a field to a JSON document. Every consumer that never reads the field breaks anyway, because they all deserialize the same blob.
 
-**How bytes evolve** — JSON vs Protobuf vs Avro, backward and forward
-compatibility, rolling upgrades, schema registries — is
-[DDIA ch. 5](../../ddia/5-encoding-and-evolution/). This folder is
-**how much domain you leak** across a service boundary: strict vs
-loose agreement, and **stamp coupling** (fat documents that glue
-teams together). You need both. A perfect Avro pipeline that
-publishes the entire Customer aggregate is a compatibility success
-and an architecture failure.
+The **contract** is that seam: the fields, types, and meanings a producer is allowed to emit, and the assumptions a consumer is allowed to make. It is coupling chosen on purpose. A fat payload is coupling chosen by accident, because the struct was already there.
 
-## The mental model
+Two different questions get the same words. One question is how bytes evolve: JSON, Protobuf, or Avro; backward compatibility (new code reads old data) and forward compatibility (old code reads new data); rolling upgrades where old and new processes run together; schema registries that check a new schema before a producer may publish. The other question is how much of a domain crosses the boundary. A perfect Avro pipeline that publishes the entire Customer aggregate can pass the compatibility check and still be an architecture failure. "We use Avro" does not pick strict or loose. An encoding can carry a tiny contract or a dump of the database.
 
-```
-  producer                         consumer
-     |                                ^
-     |         CONTRACT (the seam)    |
-     +---- typed fields? or a bag? ---+
-     |                                |
-     |   "how much of our world       |
-     |    did we just ship?"          |
+An **architecture quantum** is the set of parts that ship and fail together. A contract is what you publish when knowledge crosses from one quantum to another. Inside one quantum, two modules that always deploy together may share a type. Calling that shared type a REST contract is costume.
 
-  stamp coupling (the trap):
+## Strict or loose, per seam
 
-  [ Customer { 40 fields } ] ----event----> [ Billing ]
-                                             needs customer_id
-                                             + card_ref
-                                             now breaks when
-                                             Address.line2 changes
-```
+Teams need to change independently, and they need to understand each other. Those wants meet in the payload. Pick a point on the spectrum **per seam**. One company-wide rule is the failure mode: a public API, a plot carried by publish/subscribe, and an internal data-transfer object between two modules of the same quantum do not want the same tightness.
 
-The one sentence to remember: **the contract is coupling you chose
-on purpose**; a fat payload is coupling you chose by accident.
+**Strict** means the agreement is explicit and checkable: names, types, required versus optional, enumerations, versions. A breaking change fails at code generation, at compile time, in a contract test, or at the broker's schema check, before a customer request. gRPC with Protobuf, Avro with a registry and a compatibility mode, and OpenAPI with required fields plus consumer-driven tests are different encodings with the same instinct. The producer may not "just add a required field." The consumer may not assume a field nobody promised.
 
-Two consequences. First, "we use Avro" does not decide strict vs
-loose in this chapter's sense — encoding can carry a tiny contract
-or a dump of the database. Second, consumers that "just ignore extra
-fields" are still coupled if a rename, a meaning change, or a nested
-object they *do* touch moves. Ignoring is not insulation.
+**Loose** means a bag plus conventions. JSON objects gain whatever keys seemed useful. Extra fields are declared fine. Types are strings when they should have been enumerations (**stringly** values). Enums are implicit. Emitting is easy, and adding a key at 2 a.m. is easy. The consumer takes the two fields it wanted and hopes they mean the same thing on Monday.
 
-## Strict versus loose
+Strict costs coordination: a new required field is a project, versioning is a conversation, and a new consumer onboards from a spec. Loose costs discovery in production: a missing key, a null that used to be a string, a field reused with a new meaning. Adding a key feels free, and a new consumer onboards from an example payload that lies. The producer ships fast, and the consumer coupling stays hidden until one consumer breaks. Strict is the slower finder, and it is the right finder when a wrong field spends money. Loose is a fit when the payload is a log line nobody parses.
 
-**Problem** — Teams need to change independently. They also need to
-**understand each other**. Those wants fight in the payload.
+A useful middle is strict about the few fields that mean money or identity, and loose about decoration. Decoration stops being decoration the moment a later step decides on it. If the notifier parses an optional nested `customer.tier` to choose a template, that nest is part of the contract, whatever a README says about optional.
 
-**Solution** — Place the contract on a spectrum, then pick a point
-per seam (not per company).
+Versioning is the release valve on the strict side: additive optional fields, a new event type instead of reusing a name, an explicit `v2` when the meaning changes. The loose side versions too, by accident, every time a producer ships a new shape. There is no name for that version until an incident.
 
-**Strict** means the agreement is **explicit and checkable**: names,
-types, required vs optional, enumerations, versions. Breaking
-changes fail at generate, compile, contract-test, or broker schema
-check — *before* a customer request. gRPC + Protobuf, Avro with a
-registry and a compatibility mode, OpenAPI with required fields and
-consumer-driven tests: different encodings, same instinct. The
-producer is not allowed to "just add a required field." The consumer
-is not allowed to magically know a field you never promised.
+**Consumer-driven contracts** are tests the consumer publishes and the producer runs. They keep a strict agreement honest without a central committee for every field. They do not choose how much to expose. A consumer-driven test that asserts the whole Customer aggregate preserves stamp coupling, and the continuous-integration build stays green while it does.
 
-**Loose** means the agreement is **a bag plus conventions**: JSON
-objects with whatever keys seemed useful, "extra fields are fine,"
-stringly types, implicit enums. Easy to emit. Easy to add a key at
-2 a.m. The consumer picks the two fields it wanted and hopes they
-still mean the same thing on Monday.
+GraphQL does not land on the loose end just because a client picks fields. The schema can be strict. The stamp can still be huge if the client asks for the world.
 
-Strict is not "good" and loose is not "startup-speed." Strict costs
-**coordination**: a required-field change is a project. Loose costs
-**discovery in production**: a missing key, a null that used to be
-a string, a reused field with a new meaning.
+Ignoring unknown fields is not insulation. A rename, a change of meaning, and a nested object the consumer does touch still break that consumer.
 
-A useful middle: **strict about the few fields that mean money or
-identity, loose about decoration** — but then decoration must not
-be how the next workflow step makes a decision. The moment Notify
-parses an optional nested `customer.tier` to choose a template, that
-nest is part of the contract, however optional the README says it is.
+The other failure mode on this spectrum is a strict schema that copies the database table. That did not tighten a contract. It exported the schema, and every column rename is now a fleet event. The matching loose failure is a bag that becomes the workflow token: the whole ticket JSON walks through six services. That is **Phone Tag** inside a hashmap. Phone Tag is a plot with no conductor, where a token is passed from service to service and each hop mutates it. Changing the plot means changing the bag, which means changing every pair of hands.
 
-**Failure** — One company-wide rule. Public APIs, pub/sub plots, and
-an internal DTO between two modules of the same quantum do not want
-the same tightness. Also: calling GraphQL "loose" because clients
-pick fields. The *schema* can still be strict; the *stamp* can still
-be huge if the client asks for the world.
+## What each kind of message should contain
 
-## Trade-offs
+Inside a monolith, a Java type was the contract and the compiler was the broker. Across processes, nothing fails until runtime unless a substitute for the compiler is installed. Treat every crossing of a quantum as a published agreement.
 
-**Problem** — Reviews polarize: "without a schema we will die" vs
-"schemas make us a waterfall." Both can be right for a different
-seam.
+**Commands**, from an orchestrator to a participant, are usually stricter. They are imperative. A missing field is a bug. They should carry intent and ids, not a mirrored customer record. `ChargeCustomer` contains ids and an amount.
 
-**Solution** — Trade tightness against **change rate, blast radius,
-and how you find out you were wrong.**
+**Replies and queries** return what the caller named in the contract, not the owner's internal aggregate.
 
-| Tighter (strict) | Looser |
-|---|---|
-| Breaks at build / codegen / registry | Breaks in prod, often in *one* consumer |
-| Versioning is a conversation | Adding a key feels free |
-| New consumers onboard from a spec | New consumers onboard from an example payload that lies |
-| Slow, visible coordination | Fast producer, hidden consumer coupling |
-| Good when a wrong field spends money | Good when the payload is a log line nobody parses |
+**Events** name something that happened. A thin event carries ids plus the fields that define the fact. `TicketOpened` with `ticket_id` is that shape. Listeners that need more ask the owner, which is runtime coupling and fresh data, or they consume a projection built for them. The projection is a new contract. It is not a reason to stamp the operational row — the live **OLTP** row the customer-facing service writes — onto the event.
 
-Versioning is not a third axis so much as the **strict** world's
-release valve: additive optional fields, new event types instead of
-reusing names, explicit `v2` when meaning changes. The loose world
-*also* versions — accidentally — every time a producer ships a new
-shape. You just do not have a word for it until an incident.
+**Synchronous public APIs** are versioned in the open. Compatibility is part of the product.
 
-Consumer-driven contracts (tests the consumer publishes, the
-producer runs) are how strict stays honest without a central
-committee for every field. They do not replace choosing *how much
-to expose*. A consumer-driven test that still asserts the whole
-Customer aggregate will *preserve* stamp coupling with extra CI
-green.
+**Same-quantum internals** stay internal. A shared type between modules that always deploy together is allowed.
 
-**Failure** — Strict schemas that copy the **database table**. You
-did not tighten the contract. You **exported the schema** and now
-every column rename is a fleet event. Loose bags that become the
-workflow token (the whole ticket JSON walks through six services).
-You did not stay flexible. You built Phone Tag
-([ch. 12](../12-transactional-sagas/)) inside a hashmap.
+Ownership shows up as who may speak. Only the owner emits the canonical fact about a field. If dispatch echoes `customer.address` that it heard from the ticket service, on an event such as `TechAssigned`, dispatch has started a second contract for address. That contract goes stale. Stamp coupling creates this shadow ownership.
 
-## Contracts in microservices
+Wire format still matters, and it is the byte-evolution question above. Avro or Protobuf is how you get evolution rules a computer can check. Adding a field under a new Avro field number can keep compatibility: old consumers still parse the message. JSON is how you serve humans and browsers, if you are willing to discipline the shape yourself. The architecture question is whether the payload leaks another team's innards. A compatible Avro change does not answer it. Downstream can still page, because the coupling was the domain in the document, not the field number.
 
-**Problem** — Inside a monolith, a Java type was the contract and
-the compiler was the broker. Across processes, nothing fails until
-runtime unless you install a substitute for the compiler.
-
-**Solution** — Treat every crossing of an architecture quantum
-([ch. 2](../2-coupling/)) as a **published** agreement:
-
-- **Commands** (orchestrator → participant): usually *stricter*.
-  They are imperative; missing fields are bugs; they should contain
-  **intent + ids**, not a mirrored customer record.
-- **Replies / queries**: return what the caller named in the
-  contract, not your internal aggregate.
-- **Events** (facts): name a **happened** thing. Thin: ids + the
-  fields that *define* the fact. If listeners need more, they
-  **ask the owner** ([ch. 10](../10-distributed-data-access/)) or
-  subscribe to a projection built for them — that is a new contract,
-  not a reason to stamp the OLTP row.
-- **Synchronous public APIs**: version in the open; treat
-  compatibility as product.
-- **Same-quantum internals**: do not pretend they are
-  microservices contracts. If two modules always deploy together,
-  a shared type is allowed. Calling it a "REST contract" is costume.
-
-Ownership ([ch. 9](../9-data-ownership/)) shows up here: **only the
-owner should emit the canonical fact** about a field. If Dispatch
-echoes `customer.address` it heard from Ticket, Dispatch has started
-a second, stale contract for address. Stamp coupling *creates*
-shadow ownership.
-
-Wire format still matters — that is DDIA 5. Pick Avro/Protobuf when
-you want evolution rules the computer can check. Pick JSON when
-humans and browsers are the consumers and you are willing to
-**discipline** the shape yourself. The Hard Parts question is not
-JSON vs Avro. It is **does this payload leak another team's
-innards?**
-
-**Failure** — "The OpenAPI spec is the contract" while producers
-hand-edit JSON the spec does not mention. Specs that are not in CI
-are wishes. Also: one "canonical event model" for the company that
-every domain must fit. That is a warehouse of contracts, with the
-same bottleneck as a central warehouse of tables
-([ch. 14](../14-analytical-data/)).
+Two specification failures sit here. An OpenAPI document that producers ignore, while they hand-edit JSON the spec does not mention, is a wish. A spec that is not in the build is a wish. And one canonical event model that every domain must fit is a warehouse of contracts: the same bottleneck as a central warehouse of tables, where every new fact waits on one team.
 
 ## Stamp coupling
 
-**Problem** — A consumer needs two fields. The producer already has
-a struct with forty. Passing the struct is one line. It feels like
-reuse ([ch. 8](../8-reuse-patterns/)). It is the most expensive
-reuse in the book.
+A consumer needs two fields. The producer already has a struct with forty. Passing the struct is one line, and it feels like reuse. **Stamp coupling** is coupling through a composite the consumer did not want. The stamp can be a Java object, a protobuf message with ninety fields, a JSON document, a database row dumped onto a topic, a fat event, or an HTTP response that returns the aggregate "for convenience."
 
-**Solution** — Name **stamp coupling**: coupling through a
-**composite** the consumer did not want. The stamp can be a Java
-object, a protobuf message with 90 fields, a JSON document, a
-database row dumped to a topic, a "fat event," or an HTTP response
-that returns the aggregate "for convenience."
+```
+ticket service                         billing
+  Customer { 40 fields } --event-->    needs customer_id + card_ref
+                                       breaks when Address.line2 changes
+```
 
-Three bills, always together:
+Billing's logical need was `customer_id` and `card_ref`. The actual dependency is the producer's module boundary. `Address.line2` can be added, renamed, nested, or retyped from string to object, and billing changes even though billing never prints an address.
 
-1. **Over-coupling.** Billing now changes when `Address.line2` is
-   added, renamed, nested, or typed from string to object — even if
-   Billing never prints an address. The consumer's **logical**
-   need was `customer_id` + `card_ref`. The **actual** dependency
-   is the producer's module boundary. Independent deploy was the
-   point of the split; the stamp glues the deploys back together.
-   Schema registries make this worse if they force every consumer
-   to accept the new shape before the producer can ship: you
-   automated the glue.
-2. **Bandwidth.** Forty fields, nested orders, base64 blobs,
-   "send the screenshot while we are here." You pay it on every
-   message, every retry, every new subscriber who only wanted an
-   id. At low volume this looks free. At topic-fanout it is a
-   capacity plan you never wrote. Caching the stamp "so we don't
-   call Ticket" multiplies copies
-   ([ch. 10](../10-distributed-data-access/)).
-3. **Workflow.** The stamp becomes the **token that is the plot**.
-   Each step mutates the blob and forwards it. There is no
-   conductor; there is a document walking the building. That is
-   Phone Tag with extra fields. Changing the plot means changing
-   the blob, which means changing every pair of hands that
-   forwarded it. The document is also a **cache of other owners'
-   data**, so compensations ([ch. 12](../12-transactional-sagas/))
-   undo a stamp that may already be stale relative to the source.
+The stamp always sends three bills together.
 
-What to do instead, without pretending one tactic fits every seam:
+1. **Over-coupling.** Independent deploy was the point of the split. The stamp glues the deploys back together. A schema registry makes this worse when it forces every consumer to accept the new shape before the producer can ship. The glue is now automated.
+2. **Bandwidth.** Forty fields, nested orders, base64 blobs, "send the screenshot while we are here." You pay that on every message, every retry, and every new subscriber who only wanted an id. At low volume it looks free. At fan-out it is a capacity plan nobody wrote. Caching the stamp so a consumer does not call the ticket service multiplies copies of someone else's data.
+3. **The plot itself.** The stamp becomes the token that *is* the workflow. Each step mutates the blob and forwards it. There is no conductor. A document walks the building. That is Phone Tag with extra fields. Changing the plot means changing the blob, which means changing every hop that forwarded it. The document is also a cache of other owners' data, so a **compensation** — a later business operation that tries to undo a committed step, such as a refund — undoes a stamp that may already be stale relative to the source.
 
-- **Carve** a contract per consumer job: `ChargeCustomer`
-  contains ids and an amount, not `Customer`. Duplication of two
-  fields is cheaper than coupling to thirty-eight.
-- **Thin events + pull:** publish `TicketOpened { ticket_id }`;
-  consumers that need more **query the owner** (runtime coupling,
-  fresh data) or consume a **purpose-built projection**.
-- **Fat events on purpose:** when the consumer *must* see a
-  snapshot as it was at the moment of the fact (audit, "what did
-  we bill against"), include that snapshot **and freeze its
-  meaning**. That is a versioned type, not "here is our ORM
-  entity."
-- **Do not** "fix" stamp coupling by sharing the same DTO jar
-  across twelve services. You moved the stamp into a shared
-  library ([ch. 8](../8-reuse-patterns/)) and bought version hell.
-- **Version the meaning, not the dump.** `TicketOpened.v2` that
-  adds `priority` is a conversation. `TicketOpened` that grows a
-  nested `customer` "because Notify asked once" is a stamp with
-  a changelog.
+What to do on a given seam:
 
-**Failure** — Measuring cleanliness by "one event type per
-aggregate." That metric *maximizes* stamps. Measuring cleanliness
-by "events are ids only" and then watching every consumer hammer
-the owner on the hot path: you traded stamp coupling for
-**chatty workflow**, which [ch. 7](../7-service-granularity/)
-already warned is a reason to merge or to build a projection.
-The trade-off is the point. Stamp vs chatter is a
-[ch. 15](../15-trade-off-analysis/) analysis, not a slogan.
+- **Carve** a contract per consumer job. `ChargeCustomer` contains ids and an amount, not `Customer`. Duplicating two fields is cheaper than coupling to the other thirty-eight.
+- **Thin events, then pull.** Publish `TicketOpened { ticket_id }`. A consumer that needs more queries the owner (runtime coupling, fresh data) or reads a purpose-built projection.
+- **Fat events on purpose,** when the consumer must see the snapshot as it was at the moment of the fact: an audit, or "what did we bill against." Include that snapshot and freeze its meaning. That is a versioned type. It is not the ORM entity that maps the table.
+- **Leave the shared DTO jar alone.** Shipping the same data-transfer object in a library used by twelve services moves the stamp into a shared library and buys version hell. Deploy independence goes with it.
+- **Version the meaning.** `TicketOpened.v2` that adds `priority` is a conversation. `TicketOpened` that grows a nested `customer` because the notifier asked once is a stamp with a changelog.
 
-## How this shows up when you design something
+The failure mode is a cleanliness metric that maximizes the stamp, or one that creates a different pain. "One event type per aggregate" pushes the whole aggregate onto the wire. "Events are ids only," followed by every consumer hammering the owner on the hot path, trades the stamp for a **chatty workflow**. Chatty, here, means a plot made of many small calls that always happen together. That is a reason to merge the services, or to build a projection. **Granularity** is how much behavior sits in one service; a chatty plot is a granularity problem. Stamp versus chatter is a trade-off with named costs on both sides. It is not a slogan, and "schema-first" does not answer whether the schema leaks.
 
-- For each arrow on the diagram, write the **smallest** payload
-  that still lets the other side do its job. If you cannot name
-  the job, you are about to stamp "just in case."
-- Mark fields that are **owned** here vs **echoed** from another
-  quantum. Echoed fields are stamps until proven otherwise.
-- Say how a breaking change is detected: compiler, registry,
-  contract test, or a customer. If the last one, you chose loose
-  *and* you chose your detector.
-- Do not cite "schema-first" as if it answered leakiness.
+For each arrow, write the smallest payload that still lets the other side do its job. If the job has no name, the payload is about to be stamped "just in case." Mark fields this quantum owns, and fields echoed from another quantum. Echoed fields are stamps until something proves otherwise. Say how a breaking change is detected: the compiler, a registry, a contract test, or a customer. Detection by the customer means the seam is loose, and the detector was chosen along with it.
 
-## Check yourself
+## Recap
 
-1. DDIA 5 vs this chapter: a team adds a field with a new Avro
-   number. Compatibility holds. A downstream still pages. What
-   kind of coupling did Avro not save them from?
-2. Strict vs loose: where does each design *find out* it was
-   wrong? Give one seam where you would pick the slower finder.
-3. Commands vs events: why should a command usually be stricter
-   than a "something happened" fact — or when would you invert
-   that?
-4. Billing needs two fields from Customer. You pass the Customer
-   object. Name the three bills of stamp coupling on that one
-   decision.
-5. How does a fat event become a workflow token? Which saga cell
-   from [ch. 12](../12-transactional-sagas/) did you accidentally
-   pick?
-6. Thin event + pull vs fat snapshot: pick one production case
-   for each. What coupling did you accept?
-7. Shared DTO jar across services: which reuse pattern from
-   [ch. 8](../8-reuse-patterns/) is this, and what did you just
-   do to deploy independence?
-8. "Consumers ignore unknown fields, so we are decoupled." Give
-   two changes that still break those consumers.
-9. Who is allowed to emit `customer.address` as a fact? What
-   happens if Dispatch echoes it on `TechAssigned`?
-10. You tightened the contract by publishing the SQL schema of
-    the owner as the event type. What did you actually couple?
-
-Continue to [Managing analytical data](../14-analytical-data/).
+A contract is the coupling you publish at a quantum boundary: names, types, and how much of the domain is allowed to cross. Strict seams fail at build, generation, or a registry; loose seams fail in production, often in one consumer. Commands tend to be strict and thin (intent and ids). Events name a fact that happened; listeners that need more pull from the owner or from a projection. Stamp coupling is handing over a composite the consumer did not want, and it bills you in deploys, bandwidth, and a document that becomes the plot. A compatible encoding can still stamp. Carve the payload to the job, and only the owner emits the canonical fact.

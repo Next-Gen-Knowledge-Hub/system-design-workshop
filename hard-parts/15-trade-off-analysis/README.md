@@ -1,307 +1,118 @@
 # 15. Build your own trade-off analysis
 
-Companion notes for **Chapter 15** of *Software Architecture: The Hard
-Parts* (Ford, Richards, Sadalage, Dehghani, 2021).
+These notes teach how to analyze a design seam, from *Software Architecture: The Hard Parts* (Ford, Richards, Sadalage, Dehghani, 2021).
 
-Fourteen chapters were **worked examples** of one skill: a decision
-that looks like a tool choice is usually several **entangled
-dimensions**, and the job is to name them, name the **coupling
-points**, and pick in public. This chapter is the skill without a
-new pattern catalog. Skip it and you will own a glossary (quantum,
-saga, stamp, mesh) and still argue from slogans in the next design
-review.
+## The method is the thing you owe
 
-There is no Hard Parts chapter 16. The sequel is your system.
+A question that looks like a tool choice is usually several entangled dimensions. The work is to name them, name the coupling points, and pick in public. Pattern names are inputs to that work. Reciting them is not the work.
 
-## See also (do not merge)
+A few names used below, defined here so the method has something to bite on:
 
-**Forks in data systems** (OLTP/OLAP, cloud, single-node vs
-distributed) open [DDIA ch. 1](../../ddia/1-architecture-tradeoffs/).
-This chapter is **how you analyze any seam** — including ones DDIA
-never named. [HP 1](../1-no-best-practices/) told you there are no
-best practices and gave you ADRs and fitness functions. This
-chapter is the **method** those artifacts are supposed to contain.
-Do not paste DDIA's four forks into an ADR and call it a Hard
-Parts analysis.
+- An **architecture quantum** is the set of parts that ship and fail together.
+- A **saga** is an application protocol for a plot whose steps commit in more than one store: a state machine plus an undo story. **Fairy Tale** is the cell where a conductor tells each step to commit locally and runs compensations in reverse. **Time Travel** is the same visibility carried by events, with the undo as a second chain. **Anthology** is parallel eventual choreography: several stories, and "done" is a distributed opinion unless a completion rule exists. **Epic** is a conductor that hides half-writes until the end.
+- **Stamp coupling** is depending on a composite payload or table the consumer did not want.
+- **Data mesh** is domain-owned analytical products on a self-serve platform with federated governance. A **data product quantum** is the smallest analytical unit that is independently valuable and independently changeable.
+- An **ADR** (architecture decision record) is the short written pick: what was chosen, the costs, what will be watched.
+- A **fitness function** is a check that a constraint still holds, such as "ticket-open stays under 300 ms" or "billing can deploy without a ticket-service release."
 
-## The mental model
+Forks that belong to storage systems — transactional workload versus analytical scan, one machine versus a distributed store, and similar — can matter on a seam. Pasting that list into an ADR does not analyze the seam. There are no best practices to import. They return wearing conference badges. Catalogs of saga cells, reuse patterns, access patterns, and warehouse/lake/mesh are menus. A menu stops you inventing a ninth saga cell by accident. It does not pick the lunch.
 
-```
-  "Should we do X?"
-           |
-           v
-  [ 1 untangle dimensions ]     it was four questions
-           |
-           v
-  [ 2 list coupling points ]    who changes together?
-           |
-           v
-  [ 3 relevant cases ]          our plots, not Netflix's
-           |
-           v
-  [ 4 qualitative / numbers ]   do not fake either
-           |
-           v
-  [ 5 bottom line ]             ADR: pick, costs, follow-ups
-           |
-           x  slogans, snake oil, 40-cell matrices that
-              conclude "it depends" and stop
-```
+"It depends" is the start. The output is: it depends on these dimensions; we picked this because that cost is the one we can pay. The method has five steps. A forty-cell matrix that ends in "it depends," a slogan, and a pitch with no trade-off are how the steps get skipped.
 
-The one sentence to remember: **the method is the deliverable** —
-a named choice with named costs beats a museum of options.
+The running example is a real plot: open a ticket, charge the card, then assign a technician. A failed notice must not refund the charge. The review question that arrived was a boolean: "Should we choreograph?"
 
-Two consequences. First, pattern catalogs (including this book's)
-are **inputs** to the method, not outputs. Reciting Fairy Tale vs
-Time Travel without a coupling analysis is trivia.
-Second, "it depends" is the *start* of the work. The output is
-"it depends on *these* dimensions; we picked *this* because *that*
-cost is the one we can pay."
+## 1. Untangle the dimensions
 
-## Finding entangled dimensions
+The boolean is a bundle. "Should this plot be choreographed?" hides at least five decisions, and they can land on different sides:
 
-**Problem** — A design question arrives as a boolean. Sync or
-async? Orchestrate or choreograph? Warehouse or mesh? Postgres or
-document store? The boolean is a **bundle**.
+- Who owns workflow **state** — the row that says which step this run has reached.
+- Whether half-writes may be **visible** — charged, not yet assigned — or must be hidden.
+- How **fat** the event or command is.
+- Whether charge and assign are one quantum or two.
+- Which team gets the page.
 
-**Solution** — Split the bundle before you vote. Example: "Should
-this plot be choreographed?" hides at least:
+Hybrid is what untangling is for: orchestrate the money path, choreograph the notice. If the matrix has one row, it has not started.
 
-- who owns workflow **state** ([ch. 11](../11-distributed-workflows/)),
-- whether half-writes may be **visible** ([ch. 12](../12-transactional-sagas/)),
-- how fat the **event** is ([ch. 13](../13-contracts/)),
-- whether the steps are one **quantum** or four ([ch. 2](../2-coupling/),
-  [ch. 7](../7-service-granularity/)),
-- which **team** gets the page.
+Find dimensions by walking the customer plot and marking four things. **Failure**: what happens when assign times out after the charge committed. **Change**: who ships when a fraud check is inserted. **Scale**: which box gets hot. **Ownership**: who may write the charge. A mark that is not forced by the others is its own dimension. If two marks always move together in this domain, they are one dimension here, even if a catalog listed them apart.
 
-Those are different decisions. They can land on different sides.
-Hybrid ("orchestrate money, choreograph notify") is what
-untangling is *for*. If your matrix has one row, you have not
-started.
+The failure mode is debating the boolean for an hour. The loudest dimension wins, usually latency or the word "decoupling," and the silent ones — the undo story, the stamp, the on-call — show up in production. The other failure is copying a book's dimensions as a checklist. Mesh versus warehouse does not need a saga cell. A saga cell does not need an argument about column stores.
 
-How to find dimensions: walk the customer plot, mark **failure**,
-mark **change** (who ships a new step), mark **scale** (which box
-gets hot), mark **ownership** (who may write). Each mark that is
-not forced by the others is a dimension. If two marks always move
-together in *this* domain, they are one dimension here even if the
-book listed them apart.
+## 2. List the coupling points
 
-**Failure** — Debating the boolean for an hour. The loudest
-dimension wins (usually latency or "decoupling") and the silent
-ones (undo story, stamp, on-call) show up in production. Also:
-copying this book's dimensions as a checklist without asking
-whether *this* decision has them. Mesh vs warehouse does not need
-a saga cell. A saga cell does not need a column-store argument.
+A trade-off table that never says who must change together is a product comparison. A **coupling point** is a seam where knowledge, deploy, or failure crosses a quantum.
 
-## Coupling: analyze the points
+For each option, and for each seam, ask:
 
-**Problem** — Trade-off tables that never mention **who must
-change together** are product comparisons, not architecture.
+- What knowledge crosses: fields, plot order, identity?
+- What runtime crosses: a synchronous call, an event, a batch port?
+- Who deploys when that knowledge changes?
+- What fails when the other side is down or stale?
+- Is the coupling **static** (you cannot start without them; the source names them) or **dynamic** (you couple when the plot runs)?
 
-**Solution** — For each option, list **coupling points**: seams
-where knowledge, deploy, or failure crosses a quantum
-([ch. 2](../2-coupling/)).
+Compare options on the same points. On this ticket, three pictures:
 
-Ask, per seam:
+Orchestration puts a conductor in front of billing and dispatch. The coupling point is honest and static: the conductor names the next worker, deploys when the order changes, and the plot is down when the conductor is down. Billing does not know dispatch.
 
-- What **knowledge** crosses (fields, plot order, identity)?
-- What **runtime** crosses (sync call, event, batch port)?
-- Who **deploys** when this knowledge changes?
-- What **fails** if the other side is down or stale?
-- Is this coupling **static** (you cannot even start without them)
-  or **dynamic** (you couple when the plot runs)?
+Choreography removes that source-level name and raises a semantic hub: every subscriber has to understand "after charge, assign." The hub is harder to see, which is why it gets described as decoupled. A single stamped event that carries the whole ticket can couple more teams than five tiny commands. The coupling moved from "who do I call?" to "whose document did I just absorb?"
 
-Then compare options **on the same points**, not on vibes.
-Orchestration vs choreography: the conductor is an honest static
-hub; the event graph is a dishonest semantic hub. Stamp vs thin
-event: you moved coupling from payload shape to extra reads.
-Mesh vs warehouse: you moved coupling from a central model to
-federated contracts. There is no "uncoupled." There is **coupled
-where we can stand it**.
+A thin event plus a read moves it again, from payload shape to extra reads. The owner must be up, and the data is fresh. Mesh versus a central warehouse is the same kind of move on analytical data: coupling leaves a central model and lands on federated contracts. A contract that is `SELECT *` into a lake is still a coupling point, and it is not a network call. There is no uncoupled design. There is coupled where you can stand it.
 
-Fitness functions from [ch. 1](../1-no-best-practices/) belong
-here: if "ticket-open stays under 300 ms" or "Billing can deploy
-without Ticket" is a real constraint, write a check. Analysis
-that cannot become a test or an ADR clause is a conversation you
-will re-have.
+Write the constraint as a fitness function or as a clause in the ADR. "Ticket-open stays under 300 ms." "Billing can deploy without the ticket service." Analysis that cannot become a test or a sentence you will re-read is a conversation you will re-have.
 
-**Failure** — Counting topics, services, or repositories as a
-coupling metric. Counting is easy and mostly wrong. A single
-stamped event can couple more teams than five tiny commands.
+The failure mode is counting. Topics, services, and repositories are easy to count and mostly the wrong metric. Who must change together is the metric.
 
-## Assess trade-offs
+## 3. Run the cases you actually have
 
-**Problem** — After untangling, you have a pile. Piles do not
-ship.
+"Service A calls Service B" makes every option look fine. Real plots have an irreversible step, a human, and a support org. Analyze on your cases: ticket-open, refund, technician no-show, "the customer merged two accounts." Walk the happy path, the timeout, and the compensation. If an option dies on a case you run, it is dead, however clean it looked on a generic slide.
 
-**Solution** — For each surviving option, write **what you gain**
-and **what you pay** on the dimensions you kept. Drop dimensions
-that do not move (if both options are eventually consistent, stop
-talking about atomicity). Rank costs by **who pays**: customer,
-on-call, the team that cannot ship, the team that cannot understand.
+On this ticket the interesting case is 3 a.m., not checkout's happy path. Assign times out after the charge has committed. A timeout does not mean the charge failed to land; partial failure — one side committed, the other did not, or one side is simply late — is where the options stop looking alike. Fairy Tale has one row that moves to `compensating` and refunds, or retries assign if finishing is cheaper (forward recovery). Time Travel needs a second event chain someone remembered to subscribe to. A design copied from a talk whose plot was optional notifications dies here, because this plot moves money.
 
-A trade-off is assessed when a reasonable colleague can **disagree
-on the pick** and still agree on the costs. If they cannot even
-agree what the costs *are*, you are still entangled.
+The book's ticketing firm is a method: keep the plot, change the architecture under it, see what breaks. One toy case, especially the happy path, is the failure mode.
 
-Use the catalogs as **menus**, not as answers: saga cells, reuse
-patterns, access patterns, warehouse/lake/mesh. Menus prevent
-"we invent a ninth cell by accident." They do not pick the lunch.
+## 4. Say what you gain and what you pay
 
-**Failure** — A 20×20 matrix with traffic lights that ends in
-yellow everywhere. That is fear in spreadsheet form. Also:
-assessing only the happy path. Partial failure
-([DDIA 9](../../ddia/9-distributed-trouble/) for the physics;
-[ch. 12](../12-transactional-sagas/) for the plot) is usually
-where options diverge.
+For each option that survived, write the gain and the cost on the dimensions you kept. Drop dimensions that do not move. If both remaining options are eventual, stop talking about atomicity.
 
-## Techniques
+Rank costs by who pays: the customer, the on-call, the team that cannot ship, the team that cannot understand the rewind.
 
-### Qualitative versus quantitative
+A trade-off is assessed when a reasonable colleague can disagree with the pick and still agree on the costs. If you cannot agree what the costs *are*, the bundle is still tangled.
 
-**Problem** — Some costs are milliseconds and dollars. Some are
-"this team will not understand the rewind." People either invent
-fake numbers for the second kind or refuse to measure the first.
+**Quantitative** when a number would change the pick: the p99 of the plot, the cost of a stamp at the fan-out you planned, the abort rate, a freshness SLO. **Qualitative** when the unit is judgment: cognitive load, irreversibility, regulatory shame. Write the sentence. Do not score "team sanity" as 3.7. Do not leave "latency" as a feeling when you have traces. Swapping the two launders a gut pick through fake precision, or ignores a measurement that would have moved the decision.
 
-**Solution** — **Quantitative** when a number would change the
-pick: p99 of the plot, cost of a stamp at planned fanout, abort
-rate, freshness SLO. **Qualitative** when the unit is judgment:
-cognitive load, irreversibility, regulatory shame. Do not score
-"team sanity" as 3.7. Do write the sentence. Do not leave
-"latency" as a feeling if you have traces.
+The failure mode on the numbers is a weighted scoring model. Invented weights make a gut pick look like arithmetic. If you already know the pick, write the ADR. If you do not, a fake formula will not discover it. The failure mode on the pile is a 20-by-20 matrix of traffic lights that ends yellow everywhere. That is fear in spreadsheet form. Assessing only the happy path is the same fear: the cells diverge on the undo.
 
-**Failure** — Weighted scoring models that launder a gut pick
-through invented weights. If you already know the pick, write the
-ADR. If you do not, a fake formula will not discover it.
+## 5. Lead with the bottom line
 
-### MECE lists
+Stakeholders need the choice, the one or two decisive costs, and what you will watch. The matrix goes in an appendix. An ADR that cannot be quoted in a standup is too long. A pile of evidence is how a pitch looks thorough, and how a scared review looks rigorous.
 
-**Problem** — Options overlap ("events" vs "async") or have a
-hole ("we never listed merge the services").
+A bottom line for this ticket, once the dimensions above are accepted, can be quoted in one breath: we will orchestrate charge-then-assign in one conductor, with local commits and a refund compensation keyed by saga, step, and direction; the notice is a separate reaction that cannot undo the charge; we will watch assign's timeout rate and double-refunds. Someone can prefer a merge instead, and still agree those are the costs of the split.
 
-**Solution** — **MECE**: mutually exclusive, collectively
-exhaustive. Options should not be the same idea in two costumes.
-The set should include **do nothing**, **merge**, and **not our
-problem** (change the product rule) when those are real. Dimensions
-should not double-count (do not list "coupling" and "independent
-deploy" as if they were independent if in this case they are the
-same knob).
+The failure mode is thirty pages and no sentence that starts with "We will." A conclusion that restates the options is the same failure. The pick was hidden.
 
-MECE is a **hygiene** check, not a proof. If a colleague immediately
-names a missing option, you were not exhaustive.
+## Hygiene on the option list
 
-**Failure** — Exhaustive lists of *tools* (Kafka, Rabbit, HTTP,
-gRPC) when the exclusive axis was *style*. You will pick a tool
-and still not have a design.
+**MECE** means mutually exclusive and collectively exhaustive. Options should not be the same idea in two costumes. The set should include do nothing, merge, and "not our problem" (change the product rule) when those are real. Dimensions should not be double-counted: if "coupling" and "independent deploy" are the same knob on this decision, list them once.
 
-### The out-of-context trap
+A MECE cut for charge-then-assign, on the axis "who owns the commit and the next step":
 
-**Problem** — "Netflix does it." "The paper says." "Best practice."
-[Chapter 1](../1-no-best-practices/) already killed best practices;
-they come back wearing conference badges.
+1. Change the product rule so you do not charge until a technician is assigned. The distributed plot goes away. That is "not our problem."
+2. Merge billing and dispatch so both writes commit in one database. If they were never split, leaving that one service in place is the do-nothing case of the same commit boundary.
+3. Keep two services and run a real two-phase commit, with prepares and a coordinator (the atomic orchestrated cell, Epic, or a parallel prepare if the steps are independent).
+4. Keep two services, one conductor, local commits, compensations in reverse (Fairy Tale).
+5. Keep two services, no conductor, each step commits and emits, and the undo is its own event chain (Time Travel).
 
-**Solution** — Steal **dimensions and failure modes**, not
-conclusions. Ask what quantum, org shape, scale, and compliance
-regime the source had. If you do not know, you cannot import the
-pick. Their choreography assumed a platform team you do not have.
-Their warehouse assumed a finance close you *do* have.
+A colleague who immediately names a missing option means the list was not exhaustive. "Use Kafka," "use Rabbit," "use HTTP," and "use gRPC" are not extra options on this axis. They are pipes. You can carry (4) or (5) on any of them and still have no design. MECE is hygiene, not a proof.
 
-**Failure** — Copying a saga cell from a talk whose plot was
-optional notifications, onto a plot that moves money. Copying mesh
-from a company with fifty domains into a company with two.
+## The out-of-context trap, and pitches that hide the cost
 
-### Model relevant domain cases
+"Netflix does it," "the paper says," and "best practice" are the same move. Steal dimensions and failure modes. Leave the conclusion where you found it, unless you know the source's quantum, org shape, scale, and compliance regime. If you do not know, you cannot import the pick. Their choreography assumed a platform team you do not have. Their warehouse assumed a finance close you do have. "Always choreograph" is not even evaluable until those are known. Copying a saga cell from a talk about optional notifications onto a plot that moves money is the trap. Copying mesh from fifty domains into a company with two is the trap.
 
-**Problem** — Abstract "Service A / Service B" makes every option
-look fine. Real plots have irreversible steps, humans in the loop,
-and a Support org.
+Vendors and movements sell the absence of trade-offs. Microservices will decouple you. Events will decouple you. Mesh will scale you. Two-phase commit will make the plot ACID again. A new encoding will make contracts safe. Any "always" or "never" about an architecture style is a candidate for the bin. Ask what the pitch hides. It is usually a platform team, a visible inconsistency, a stamp, or a central bottleneck that moved and did not disappear.
 
-**Solution** — Analyze on **your** cases: ticket-open, refund,
-tech-no-show, "customer merged two accounts." Walk happy, timeout,
-and compensate. If an option dies on a case you actually run, it
-is dead, however pretty it is on a generic slide. The book's
-ticketing firm was a method: **keep the plot, change the
-architecture under it**, see what breaks.
+Using a catalog as named costs is the opposite of that pitch. Using the catalog as a conclusion is the pitch with a nicer name. "We picked Anthology" without a join rule is still a pitch: Anthology's hidden cost is that nobody owns "are we done?" Fairy Tale, used as a conclusion, hides the hub, the visible half-state, and a compensation that can itself fail. Data mesh, used as a conclusion, hides the platform, the product work inside domains, and automated policy; without them you have twelve snowflakes or twelve swamps. A strict contract, used as a conclusion, hides the coordination cost, and a strict schema that copies the table still leaks the owner's innards.
 
-**Failure** — One toy case. Especially the happy path of checkout.
-The interesting cell is the 3 a.m. one.
+Replacing last year's slogan with this vocabulary, without the five steps, is the same failure.
 
-### Prefer the bottom line over overwhelming evidence
+## Recap
 
-**Problem** — Analysis as a pile of appendices. Stakeholders cannot
-find the pick. Authors hide because a clear sentence can be wrong
-in public.
-
-**Solution** — Lead with: **the choice, the one or two decisive
-costs, what you will watch.** Put the matrix in an appendix. An
-ADR ([ch. 1](../1-no-best-practices/)) that cannot be quoted in a
-standup is too long. Overwhelming evidence is how snake oil looks
-"thorough" and how scared architects look "rigorous."
-
-**Failure** — Thirty pages, no sentence that starts with "We will."
-A conclusion that restates the options.
-
-### Avoid snake oil and evangelism
-
-**Problem** — Vendors and movements sell **absence of trade-offs**.
-Microservices will decouple you. Events will decouple you. Mesh
-will scale you. 2PC will make it ACID again. A new encoding will
-make contracts safe.
-
-**Solution** — Every sentence that contains "always" or "never"
-about an architecture style is a candidate for the bin. Ask what
-the pitch **hides** (usually: a platform team, a visible
-inconsistency, a stamp, a central bottleneck moved not removed).
-Use this book's catalogs as **named costs**, which is the opposite
-of evangelism.
-
-**Failure** — Replacing last year's slogan with this book's
-vocabulary without doing the analysis. "We picked Anthology"
-without a join rule is still snake oil. You just used a nicer
-name.
-
-## Short epilogue: the method is the deliverable
-
-The patterns were never the point. Epic and Fairy Tale, stamp
-coupling, data product quanta — those are **examples of naming
-costs**. You will meet decisions this book does not have a cute
-name for (a new compliance rule, a vendor you cannot leave, a
-team that does not exist yet). If you can untangle, list coupling
-points, run *your* cases, and write a bottom line, you finished
-the book. If you can only recite the cube, you finished the
-glossary.
-
-The workshop index is the map back into both tracks when a word
-("transaction," "consistency," "schema," "workflow," "OLAP")
-shows up again and tries to merge folders. Keep them split. Do
-the analysis on the job you actually have.
-
-## Check yourself
-
-1. Take a boolean you argued last month. Split it into at least
-   three dimensions. Which one actually drove the pick?
-2. What is a coupling point that is not "a network call"? Give
-   one from contracts and one from analytical data.
-3. Why is "number of topics" a bad coupling metric?
-4. Name a cost you should quantify and a cost you should not
-   pretend to quantify. What goes wrong if you swap them?
-5. Write three options for a plot that must charge then assign,
-   and show they are MECE. Include "merge the services."
-6. An article says "always choreograph." What context would you
-   need before the sentence is even *evaluable*?
-7. Why do generic A/B services make every saga cell look
-   acceptable? What cases would you substitute?
-8. Open an ADR you have seen. Can you quote the bottom line in
-   one breath? If not, what was being hidden?
-9. Pick a slogan from this book ("Fairy Tale," "data mesh,"
-   "strict contracts") and state the cost it hides if you use it
-   as a conclusion.
-10. After this chapter, what is the artifact you owe a design
-    review — a catalog, or a method? What does the artifact
-    contain?
-
-Continue with the workshop map: [topic index](../../INDEX.md)
-(both tracks, same words, different jobs) and the
-[DDIA track](../../ddia/README.md) if you still need how the
-*stores* behave. There is no next Hard Parts chapter. The next
-decision is yours.
+Untangle the boolean into dimensions, list who must change together at each seam, run the cases you actually have (including timeout and undo), keep numbers and judgments in their own units, and write a bottom line a standup can quote: the choice, the decisive costs, what you will watch. Pattern names — Epic, Fairy Tale, stamp coupling, a data product quantum — are examples of named costs. The next decision may have no cute name: a new compliance rule, a vendor you cannot leave, a team that does not exist yet. The same five steps still apply. Reciting the cube finishes the glossary. The artifact a design review is owed is that method, recorded as an ADR and, where a constraint is real, as a fitness function. A catalog, a topic count, and a slogan are not the artifact.

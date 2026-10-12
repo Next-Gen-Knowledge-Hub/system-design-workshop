@@ -1,179 +1,152 @@
-# 11. Batch processing
+# Batch processing
 
-Companion notes for **Chapter 11** of *Designing Data-Intensive Applications*
-(2nd ed.). OLTP (ch. 1–8) serves the live request. A huge amount of
-valuable work is **offline**: crunch yesterday’s logs, train a model,
-rebuild a search index. The input is a **bounded** dataset — it has an
-end — so you can rerun the job and get the same answer. The second
-edition rewrote this chapter: MapReduce is history as a product, object
-stores and dataflow engines are the present — the *ideas* of map,
-shuffle, and reduce remain.
+These notes teach batch processing from *Designing Data-Intensive Applications*, 2nd edition, by Martin Kleppmann and Chris Riccomini.
 
-## What this chapter is for
+## What batch processing is
 
-Batch is how you build **derived data** (ch. 1) when a few minutes or
-hours of delay is fine. It is also how you **recover**: if the transform
-was wrong, you fix the code and run it again. Streams (ch. 12) are the
-same idea without an end of file.
+A checkout service answers one request at a time: reserve the item, charge the card, write the order. That live path is OLTP, online transaction processing. A large share of the valuable work is not on that path. It happens later, offline. You count yesterday's logs, train a ranking model, or rebuild a search index. The input is a **bounded** dataset. It has an end. Because it has an end, you can run the job again on the same bytes and get the same answer, as long as the transform itself has not changed.
 
-Users almost never query the batch filesystem. They query a store that
-was **loaded** from batch output. That bridge matters for design docs.
+The result is **derived data**: a dataset computed from data you already stored. A delay of minutes or hours is acceptable. The same job is how you recover. If the transform was wrong, you fix the code and run it again. A stream is the same idea with no end of file. More events keep arriving, so you cannot wait until "the whole input" is present. Batch is the case where you can.
 
-## Batch processing with Unix tools
+People almost never query the batch filesystem. They query a store that was **loaded** from the batch output: a search index, a warehouse table, a feature store. The job writes files. A later step publishes those files into something the product can read at the latency of a live request.
 
-`cat logs | grep error | awk … | sort | uniq -c` is a batch pipeline:
-immutable text in, text out, compose with pipes. **Sort then aggregate**
-is how you group more data than fits in memory. Distributed batch
-systems are this shape with a filesystem that spans machines and a
-scheduler that retries tasks.
+MapReduce as a product is history. Object stores and dataflow engines are what people run. The ideas of map, shuffle, and reduce are still the shape of the work.
 
-Unix lessons that survive at petabyte scale:
+## A pipeline of small programs
 
-- **Immutable inputs** — do not mutate the file you are reading.
-- **Pure transforms** — same input, same output; reruns are safe.
-- **Output replaces output** — write a new path, then atomically publish.
-- Side effects (mapper opens a TCP connection to prod Postgres) make
-  retries dangerous and debugging miserable.
+Take one day's web-server logs, already closed:
 
-Custom programs vs pipelines: a single binary that does everything is
-harder to reuse; small stages with clear contracts compose. The same
-argument reappears as Spark stages and Airflow tasks.
+```
+2026-08-27T02:14:03Z level=error sku=8841 msg=timeout
+2026-08-27T02:14:09Z level=info  sku=12   msg=ok
+2026-08-27T02:14:11Z level=error sku=8841 msg=timeout
+```
 
-## Batch processing in distributed systems
+`cat logs | grep error | awk … | sort | uniq -c` is a batch pipeline. Each stage reads text and writes text. The shell composes the stages with pipes. `grep` keeps the error lines. `awk` pulls out the sku. `sort` orders those keys. `uniq -c` counts runs of the same key. The count is the derived data: sku 8841 timed out twice.
 
-### Distributed filesystems
+**Sort, then aggregate** is how you group more data than fits in memory. An external sort spills sorted runs to disk and merges them. Once the keys are in order, one pass counts each group. You do not need a hash table the size of the input.
 
-**HDFS-style:** large files split into blocks, replicated across nodes,
-a namenode / metadata service tracks the tree. Compute was often
-**colocated** with data (“bring code to data”) because networks were
-the bottleneck. The programming model: list files, read splits in
-parallel.
+A distributed batch system is this shape plus two pieces: a filesystem that spans machines, and a scheduler that retries a task that died.
 
-### Object stores
+Four lessons from Unix still hold at petabyte scale.
 
-**S3, GCS, Azure Blob** are the cloud-native default: cheap, durable,
-high latency per small request, excellent aggregate throughput.
-Compute is **disaggregated** (ch. 1): spin a Spark/Flink/BigQuery job
-tonight, shut it down tomorrow, data remains. You pay for listing and
-small-file anti-patterns; you win on ops simplicity.
+**Immutable inputs.** Do not mutate the file you are reading. Yesterday's log stays yesterday's log. A rerun starts from the same bytes.
 
-Files for analytics are typically **columnar** (Parquet/ORC) — ch. 4.
-A **table** is a set of files plus metadata.
+**Pure transforms.** The same input produces the same output. A rerun is safe because the stage does not depend on the clock, on a stray write, or on whatever else production is doing at that moment.
 
-### Distributed job orchestration
+**Output replaces output.** Write a new path, then publish it atomically. Readers move from the old result to the new result when a pointer changes. They do not read a directory that is still being filled.
 
-Two layers people confuse:
+**Side effects break the rerun.** Suppose the mapper opens a TCP connection to production Postgres and inserts a row for every record. A retry inserts the row again. A crash halfway through leaves a partial load and no clean place to resume. Debugging is miserable because the output is tangled with live traffic. The durable pattern is the opposite: the mapper writes a file such as Parquet, and a later loader job publishes that file. The compute stage stays pure. The load is a separate step with its own contract.
 
-| Layer | Examples | Job |
+One binary that filters, counts, joins, and loads is harder to reuse. Small stages with clear contracts compose. One stage filters, the next aggregates, a later task loads. The same argument shows up as Spark stages and as Airflow tasks. You replace one stage without rewriting the others.
+
+## Where the files live
+
+### A distributed filesystem
+
+An HDFS-style filesystem splits large files into blocks and replicates those blocks across nodes. A namenode, or another metadata service, tracks the tree: which file, which blocks, which nodes hold them. Compute was often **colocated** with the data. The phrase is "bring the code to the data." The network was the bottleneck, so shipping a terabyte to a distant CPU cost more than running the task on the machine that already stored the block. The programming model is: list the files, then read the splits in parallel.
+
+### An object store
+
+S3, GCS, and Azure Blob are the usual cloud storage. They are cheap and durable. One small request has high latency. Many requests at once have excellent aggregate throughput. Compute is **disaggregated**. Storage and processing are separate services. You start a Spark, Flink, or BigQuery job tonight, shut the computers down tomorrow, and the data remains. You do not keep a cluster running all week merely to hold the files. You do pay for listing, and you pay for the small-file anti-pattern: a huge number of tiny objects makes listing expensive and the job slow to start. What you gain is simpler operations. The files stay. The computers come and go.
+
+Files for analytics are typically **columnar**. Parquet and ORC store the values of one column together, so a query that needs only `sku` and `country` does not read every field of every event. A **table** here is a set of those files plus metadata that says which files belong to the table right now.
+
+### A catalog names the current snapshot
+
+A catalog — the Hive metastore, Glue, Iceberg, Delta, or Hudi — records which files are "the table," which snapshot is current, and how to time-travel to an older snapshot when you reprocess. The object store holds immutable files. The catalog holds the pointer. Reprocessing a bad day means reading the snapshot for that day, rather than guessing which objects were overwritten.
+
+## Who runs the work
+
+Two layers both get called "the scheduler," and they do different jobs.
+
+| Layer | Examples | What it decides |
 |---|---|---|
-| **Cluster scheduler** | YARN, Kubernetes, Mesos, Spark’s manager | Where tasks run, CPU/RAM packing, retry a failed *task* |
-| **Workflow orchestrator** | Airflow, Dagster, Prefect, Temporal for some jobs | DAG of *jobs*, calendars, dependencies, “ETL then train then publish” |
+| Cluster scheduler | YARN, Kubernetes, Mesos, Spark's manager | Where a task runs, how CPU and RAM are packed, whether to retry a failed task |
+| Workflow orchestrator | Airflow, Dagster, Prefect, Temporal for some jobs | The DAG of jobs, the calendar, and dependencies such as "ETL, then train, then publish" |
 
-A failed task should retry **without** double-applying side effects.
-That is why a stage’s output should be a **new directory / snapshot**
-(`s3://bucket/events/dt=2026-08-27/run=uuid/`), then an **atomic swap**
-of the pointer the next stage reads (metastore update, `_SUCCESS`
-marker, Iceberg/Delta commit).
+The cluster scheduler places a task and retries it if the machine dies. It does not know that training must wait until featurization has finished. The workflow orchestrator owns that dependency.
 
-**Catalogs** (Hive metastore, Glue, Iceberg / Delta / Hudi): which files
-are “the table,” which snapshot is current, how to time-travel for
-reprocessing.
+A failed task must retry **without** applying a side effect twice. That is why a stage writes a new directory or snapshot, not into the only copy:
 
-## Batch processing models
+`s3://bucket/events/dt=2026-08-27/run=<uuid>/`
+
+The next stage does not discover that path by convention alone. An **atomic swap** moves the pointer it reads. The swap is a metastore update, a `_SUCCESS` marker, or an Iceberg or Delta commit. Before the swap, readers still see the previous complete snapshot. After the swap, they see the new one.
+
+Picture two jobs that both start reading `dt=2026-08-27/` while the writer is still uploading files into that same prefix. One reader lists the prefix at 02:10 and sees the morning files. The other lists it at 02:40 and sees morning plus evening. They compute different totals from what was supposed to be one dataset. Publishing by swapping a pointer closes that window. The pointer moves only when the new snapshot is complete, so a reader sees either the old whole or the new whole.
+
+An **orchestration failure** is not a **data-quality** failure. Airflow retrying a dead task is the first. A task that exits zero with the wrong rows is the second. Catch the second with row counts, checksums, and a quarantine path for records that fail the check, before the snapshot is published.
+
+## How the computation is organized
 
 ### MapReduce
 
-Map over splits → **shuffle** by key → reduce. It taught the industry
-to think in shuffles and tolerant retries. It also checkpointed to disk
-between stages. You will rarely start a greenfield MR job in 2026; you
-will still feel the shuffle in Spark, Flink, and warehouse engines.
+Map over splits, **shuffle** by key, then reduce.
+
+On the error log, each mapper reads one split and emits `(8841, 1)` for every timeout. The shuffle sends every pair with key `8841` to the same reducer. The reducer sums that group. A mapper that dies is retried on the same immutable split. The output of a finished stage was checkpointed to disk, so a failed reduce did not have to repeat the map, and the job paid for that disk IO between stages.
+
+You will rarely start a greenfield MapReduce job in 2026. The shuffle is still there in Spark, Flink, and warehouse engines.
 
 ### Dataflow engines
 
-Spark, Flink (batch mode), BigQuery, Snowflake, DuckDB at smaller
-scale: a **graph of operators**, pipelining, in-memory shuffle when
-possible, whole-stage codegen / vectorization (ch. 4). You write
-“join these relations”; the optimizer picks broadcast vs partitioned
-join, pushdowns, and column pruning.
+Spark, Flink in batch mode, BigQuery, Snowflake, and DuckDB at smaller scale run a **graph of operators**. Stages can pipeline, so one operator's output can flow into the next without a disk checkpoint between them. The shuffle stays in memory when the data fits. Whole-stage code generation and vectorization compile a stretch of that graph into tight code that processes a column in batches, instead of interpreting one row through one operator at a time.
 
-### Shuffling data
+You write "join these relations." The optimizer chooses the plan. A **broadcast join** sends a small table, such as a country lookup, to every worker. A **partitioned join** shuffles both sides on the join key so matching rows meet in one place. **Pushdown** applies a filter at the scan, before later stages see the dropped rows. **Column pruning** reads only the columns the query names.
 
-The expensive part: every record with the same key must meet on the
-same reducer / partition. Network and disk amplify. **Skew** (one key
-holds 40% of rows) recreates the hot-spot problem (ch. 7). Salting keys,
-two-phase aggregation, and skew-aware joins are the same family of
-tricks as scattering a celebrity key.
+What got faster is the path between stages and the optimizer's choices. What stayed the same is the requirement that rows with the same key meet.
+
+### The shuffle, and what skew does to it
+
+The expensive part is that meeting. Every record with the same key must arrive at the same reducer or partition. The network carries those records. Disk amplifies the cost when the shuffle spills.
+
+**Skew** means one key holds a disproportionate share. One key with 40% of the rows is enough. That reducer becomes a hot spot: one partition does almost all the work, and the job finishes only when that one task finishes. It is the same shape as a celebrity key that every request touches. The other workers sit idle.
+
+The repairs are ways of scattering that celebrity key.
+
+**Salting** appends a random bucket to the hot key, so `8841` becomes `8841#0` through `8841#7` and the shuffle spreads it. A second aggregation strips the salt and adds the buckets back together.
+
+**Two-phase aggregation** reduces locally first. Each worker emits a partial count. The shuffle then carries those partials, not every raw row.
+
+A **skew-aware join** detects the hot key and handles it apart from the rest, so that one key does not own a single reducer.
+
+All three exist because a shuffle is only as balanced as its keys.
 
 ### Joins and grouping
 
-Sort-merge and hash joins over partitions turn “events + dimension
-table” into “events enriched with country” without a billion OLTP
-point lookups. Grouping is shuffle + aggregate. Windowed analytics in
-batch are bounded windows over a finite file — easier than stream
-windows (ch. 12).
+A **sort-merge join** sorts both inputs on the join key and walks them in lockstep. A **hash join** builds a table from one side and probes it with the other. Over partitions, either one turns "events plus a dimension table" into "events enriched with country." You do not do a billion point lookups against the OLTP database, one per event, to ask what country this user is in. You join the event files to a snapshot of the dimension.
 
-### Query languages and DataFrames
+Grouping is a shuffle plus an aggregate. Same key, same place, then sum or count.
 
-SQL for analysts and warehouse jobs; **DataFrames** / Datasets for ML
-feature pipelines (ch. 3). Same engine, different costume. The second
-edition treats DataFrames as a first-class batch citizen, not a side
-note.
+Windowed analytics in a batch job are **bounded windows** over a finite file. The file ends, so each window ends with it. You can see every event that will ever belong to Tuesday before you emit Tuesday's count. A stream window does not have that closed end. Events keep arriving, and you have to decide when to stop waiting.
 
-## Batch use cases
+### SQL and DataFrames
 
-### Extract–transform–load
+Analysts and warehouse jobs write SQL. Feature pipelines for machine learning often use DataFrames or Datasets. It is the same engine in a different costume. DataFrames are a first-class way to write the batch job, not a side note. A pipeline that groups clicks by user and joins a country table performs the same shuffle and join as the SQL behind a dashboard.
 
-Operational systems → lake / warehouse. Scheduled. ELT (load first,
-transform in the warehouse) is the modern cloud shape. The contract is
-**freshness** (“hourly”) and **correctness** (“rerunnable”).
+## What the jobs are for
+
+### From operational systems into a lake or warehouse
+
+Operational databases feed a lake or a warehouse on a schedule. That movement is extract, transform, and load. **ELT** reverses the middle: load the files first, then transform them with the warehouse engine. That is the usual shape in the cloud. The contract has two parts. **Freshness** is a promise such as "hourly," and you state it. **Correctness** means the job is rerunnable. A bad hour is recomputed from the immutable input.
 
 ### Analytics
 
-Pre-aggregations, dashboards, ad hoc SQL. Do not run this on the OLTP
-primary (ch. 1). Column stores and MPP warehouses exist for this load.
+Pre-aggregations, dashboards, and ad hoc SQL belong on column stores and on MPP warehouses, massively parallel engines built to scan and aggregate large files. They do not belong on the OLTP primary. A dashboard that scans a week of clicks competes with checkout for the same CPU, the same disk, and the same locks.
 
 ### Machine learning
 
-Dump, clean, featurize, train. Embeddings for vector indexes (ch. 4)
-are often a batch (or stream) job. Training wants **reproducible**
-snapshots of features, not a live race with production writes.
+The path is dump, clean, featurize, train. Embeddings that fill a vector index — numeric vectors used to find similar items — are often produced by a batch job, and sometimes by a stream job. Training wants a **reproducible snapshot** of the features. It does not want a live race with production writes, where Tuesday's training set silently includes half of Wednesday. A dated directory, or a catalog snapshot, is what makes "this model was trained on that input" something you can run again.
 
-### Serving derived data
+### A view the product can read
 
-The job’s output is **bulk-loaded** into MySQL, Elasticsearch, a KV
-store, or a feature store so the product can read at OLTP latency. The
-batch job is not user-facing; the **loaded view** is. Rebuild =
-recompute files + reload (or blue/green index swap).
+The job's output is **bulk-loaded** into MySQL, Elasticsearch, a key-value store, or a feature store. The product then reads that copy at OLTP latency. The batch job is not on the user-facing path. The **loaded view** is.
 
-That last point is the bridge to ch. 12–13: derived data architecture
-starts here, then goes continuous.
+A rebuild recomputes the files and reloads them, or swaps a blue index for a green one. The new index is built fully beside the old one. Traffic moves only when the new one is ready. If yesterday's indexing job used a buggy tokenizer, you fix the tokenizer, recompute the index from the lake snapshot, and swap. You do not edit the live index row by row and hope the retry is safe.
 
-## How this shows up when you design something
+You will reprocess. Write outputs as immutable dates and versions. Do not `UPDATE` the only copy in place. A nightly recommendations job is a valid first version. Streaming updates are a later version, when the freshness target requires them. Say the target: "recommendations may be a day old" is a design choice.
 
-- “Recommendations” in an interview: nightly batch is a valid v1;
-  streaming updates are v2. Say the freshness SLO.
-- Backfills: you *will* reprocess. Design output as immutable dates /
-  versions, not `UPDATE` in place on the only copy.
-- Separate **orchestration failure** (Airflow retry) from **data
-  quality** (row counts, checksums, quarantine).
-- Do not run heavy analytics on the OLTP primary.
+Derived data starts as files computed from a bounded input and loaded into a serving store. The same view can later be maintained continuously as events arrive. The contract does not change. The view is a function of the record, and you can build it again.
 
-## Check yourself
+## Recap
 
-1. Why is “mapper writes to Postgres” a worse batch design than
-   “mapper writes Parquet, later a loader job”?
-2. What is a shuffle, and why does key skew kill it?
-3. MapReduce vs Spark-style dataflow: what got faster for users, and
-   what idea stayed the same?
-4. How would you rebuild a search index from a lake if yesterday’s job
-   used a buggy tokenizer?
-5. Cluster scheduler vs workflow orchestrator: which one knows that
-   “train” must wait for “featurize”?
-6. Why atomic publish of a snapshot matters when two readers start a
-   job mid-write?
-7. Object store vs HDFS: what did disaggregation change about when you
-   pay for compute?
-8. Where do Iceberg/Delta-style catalogs sit in the “immutable outputs”
-   story?
-
-Continue to [Stream processing](../12-stream-processing/).
+Batch processing computes derived data from an input that has an end. Leave that input immutable, keep each stage pure, and publish a new snapshot by swapping a pointer, so a retry does not apply a side effect twice and a reader never sees a half-written directory. A cluster scheduler places and retries tasks. A workflow orchestrator orders whole jobs, which is why it knows that training waits for featurization. Map, shuffle, and reduce are still the shape of the work, whether intermediate data is checkpointed to disk or pipelined in memory. Skew turns one key into a hot spot on the shuffle. People read a store loaded from the output, and a wrong transform is fixed by computing that output again from the original files.

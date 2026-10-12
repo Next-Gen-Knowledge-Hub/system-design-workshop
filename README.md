@@ -7,8 +7,8 @@ service granularity, data ownership, sagas, and contracts when the system
 is no longer one process.
 
 We are guiding this workshop with two books. They are kept on **separate
-tracks**. Where a topic appears in both, the notes do not merge the
-chapters — they **mention** the other track and send you there.
+tracks**. A chapter note teaches that chapter. It does not point at the
+other book, and it does not point at the other chapters.
 
 | Track | Folder | Book |
 |---|---|---|
@@ -38,10 +38,8 @@ and reassemble* lens, not a replacement.
 
 You can write a service that talks to a database. You do not need prior
 distributed-systems theory, microservice taxonomy, or saga catalogs —
-that is what the folders are for. Where a chapter needs a concept from
-an earlier one *in the same book*, it says so. Where the *other book*
-covers the same word from a different angle, you get a one-line **See
-also** and a link, not a rewrite.
+that is what the folders are for. Where a chapter needs a word, it
+teaches that word in the note itself.
 
 ## How the two books divide the work
 
@@ -60,9 +58,9 @@ a system and argue the coupling you just bought*.
 
 Read DDIA first if "quorum" and "write skew" are still fog. Read Hard
 Parts first if you already operate a database and the pain is *where to
-cut the services*. Either order works; the index is the map. Do not merge
-a Hard Parts chapter into a DDIA folder because they share a word
-("transaction", "consistency", "schema", "workflow", "OLAP").
+cut the services*. Either order works. A shared word ("transaction",
+"consistency", "schema", "workflow", "OLAP") still means a different job
+in each book, and each folder keeps its own chapter.
 
 This repository contains the following topics
 
@@ -75,13 +73,11 @@ This repository contains the following topics
  - Cloud vs self-hosting, cloud-native architecture
  - Distributed vs single-node
  - Data systems, law, and society
- - **See also:** [Hard Parts no best practices](./hard-parts/1-no-best-practices/), [analytical data](./hard-parts/14-analytical-data/)
 2. [Defining nonfunctional requirements](./ddia/2-nonfunctional-requirements/) — DDIA ch. 2
  - Case study: social-network home timelines
  - Performance (latency, percentiles, SLAs)
  - Reliability and fault tolerance
  - Scalability and maintainability
- - **See also:** [Hard Parts modularity drivers](./hard-parts/3-modularity/)
 
 **Part B — Data on one machine (models, disks, bytes)**
 
@@ -89,14 +85,12 @@ This repository contains the following topics
  - Relational vs document
  - Graphs, GraphQL, event sourcing / CQRS
  - DataFrames, matrices, arrays
- - **See also:** [Hard Parts operational data / database types](./hard-parts/6-operational-data/)
 4. [Storage and retrieval](./ddia/4-storage-and-retrieval/) — DDIA ch. 4
  - LSM-trees vs B-trees
  - Column stores, warehouses, vector indexes
 5. [Encoding and evolution](./ddia/5-encoding-and-evolution/) — DDIA ch. 5
  - JSON / Protobuf / Avro
  - Dataflow through DBs, RPC, workflows, events
- - **See also:** [Hard Parts contracts](./hard-parts/13-contracts/)
 
 **Part C — Distributed data (the heart of system design)**
 
@@ -104,32 +98,27 @@ This repository contains the following topics
  - Single-leader (sync/async, failover, fencing, replication logs)
  - Lag and session guarantees; multi-leader; sync engines / local-first
  - Leaderless quorums, conflicts, version vectors
- - **See also:** [Hard Parts distributed data access](./hard-parts/10-distributed-data-access/)
 7. [Sharding](./ddia/7-sharding/) — DDIA ch. 7
  - Hash vs range, hot spots, rebalancing, request routing
  - Multitenancy; local vs global secondary indexes
 8. [Transactions](./ddia/8-transactions/) — DDIA ch. 8
  - ACID; read committed, snapshot, write skew, lost updates
  - Serializability (serial exec, 2PL, SSI); 2PC and exactly-once
- - **See also:** [Hard Parts data ownership / sagas](./hard-parts/9-data-ownership/), [transactional sagas](./hard-parts/12-transactional-sagas/)
 9. [The trouble with distributed systems](./ddia/9-distributed-trouble/) — DDIA ch. 9
  - Partial failure; networks, timeouts, clocks, process pauses
  - Quorums, fencing, Byzantine faults; formal methods / Jepsen
 10. [Consistency and consensus](./ddia/10-consistency-and-consensus/) — DDIA ch. 10
  - Linearizability (cost, CAP); logical clocks and ID generators
  - Consensus, replicated logs, coordination services (etcd/ZK)
- - **See also:** [Hard Parts eventual-consistency patterns](./hard-parts/9-data-ownership/) (application-level, not consensus)
 
 **Part D — Derived data (how systems stay in sync without one giant DB)**
 
 11. [Batch processing](./ddia/11-batch-processing/) — DDIA ch. 11
  - Unix pipelines; object stores; orchestration vs schedulers
  - MapReduce → dataflow; shuffle/skew; ETL, ML, serving views
- - **See also:** [Hard Parts analytical data / mesh](./hard-parts/14-analytical-data/)
 12. [Stream processing](./ddia/12-stream-processing/) — DDIA ch. 12
  - Queues vs log-based brokers; CDC vs dual-write
  - Event time, watermarks, joins, exactly-once boundaries
- - **See also:** [Hard Parts workflows](./hard-parts/11-distributed-workflows/)
 13. [A philosophy of streaming systems](./ddia/13-streaming-philosophy/) — DDIA ch. 13
  - Derive don’t dual-write; batch+stream; unbundling the DB
  - End-to-end idempotency, async constraints, trust-but-verify
@@ -147,12 +136,10 @@ This repository contains the following topics
 1. [No best practices](./hard-parts/1-no-best-practices/) — HP ch. 1
     - Why architecture is trade-offs, not recipes; ADRs; fitness functions
     - Architecture vs design; the book's running ticketing case
-    - **See also:** [DDIA architecture forks](./ddia/1-architecture-tradeoffs/)
 2. [Coupling](./hard-parts/2-coupling/) — HP ch. 2
     - Architecture quantum; static vs dynamic coupling; independent deploy
 3. [Modularity](./hard-parts/3-modularity/) — HP ch. 3
     - Drivers: maintainability, testability, deployability, scale, availability
-    - **See also:** [DDIA nonfunctional requirements](./ddia/2-nonfunctional-requirements/)
 4. [Decomposition](./hard-parts/4-decomposition/) — HP ch. 4
     - Is the codebase decomposable? Afferent/efferent, main sequence
     - Component-based split vs tactical forking
@@ -160,7 +147,6 @@ This repository contains the following topics
     - Identify, gather, flatten, dependencies, domains, domain services
 6. [Pulling apart operational data](./hard-parts/6-operational-data/) — HP ch. 6
     - Data disintegrators vs integrators; five-step split; database types
-    - **See also:** [DDIA data models](./ddia/3-data-models/), [storage](./ddia/4-storage-and-retrieval/)
 7. [Service granularity](./hard-parts/7-service-granularity/) — HP ch. 7
     - Disintegrators (scope, volatility, scale, fault, security, extension)
     - Integrators (transactions, workflow, shared code, data relationships)
@@ -171,22 +157,16 @@ This repository contains the following topics
     - Replication, shared library, shared service, sidecar / mesh
 9. [Data ownership and distributed transactions](./hard-parts/9-data-ownership/) — HP ch. 9
     - Single / common / joint ownership; eventual-consistency patterns
-    - **See also:** [DDIA transactions](./ddia/8-transactions/) (isolation inside one DB)
 10. [Distributed data access](./hard-parts/10-distributed-data-access/) — HP ch. 10
     - Interservice call, column replication, replicated cache, data domain
-    - **See also:** [DDIA replication](./ddia/6-replication/)
 11. [Managing distributed workflows](./hard-parts/11-distributed-workflows/) — HP ch. 11
     - Orchestration vs choreography; who owns workflow state
-    - **See also:** [DDIA streams](./ddia/12-stream-processing/) (brokers and CDC, not saga style)
 12. [Transactional sagas](./hard-parts/12-transactional-sagas/) — HP ch. 12
     - Atomic vs eventual × orchestrated vs choreographed; compensating updates
-    - **See also:** [DDIA 2PC / exactly-once](./ddia/8-transactions/)
 13. [Contracts](./hard-parts/13-contracts/) — HP ch. 13
     - Strict vs loose; stamp coupling
-    - **See also:** [DDIA encoding and evolution](./ddia/5-encoding-and-evolution/)
 14. [Managing analytical data](./hard-parts/14-analytical-data/) — HP ch. 14
     - Warehouse, lake, data mesh
-    - **See also:** [DDIA OLTP/OLAP](./ddia/1-architecture-tradeoffs/), [batch](./ddia/11-batch-processing/)
 15. [Build your own trade-off analysis](./hard-parts/15-trade-off-analysis/) — HP ch. 15
     - Entangled dimensions; MECE; out-of-context trap; bottom line over slideware
 
@@ -195,18 +175,11 @@ Cross-cutting: [topic index](./INDEX.md) · [design trade-offs cheat sheet](./DE
 ## How to use this workshop
 
 1. Read the book chapter. The book is the source of truth.
-2. Read the matching folder here. Headings follow that book's topics.
-3. When a **See also** points at the other track, follow it only if you
-   need that angle (how the *store* behaves vs how you *cut the services*).
-   Do not merge the two chapters in your notes.
-4. Answer the **Check yourself** questions in your own words. A good
-   answer has three parts: the takeaway, the failure mode it prevents, and
-   one production example from a system you have worked on.
+2. Read the matching folder here. The note teaches that chapter on its
+   own: the mechanism, a concrete example, and what breaks.
 
-Work through each track in order the first time. You cannot talk honestly
-about consensus (DDIA 10) until you have felt replication lag (6) and
-network ambiguity (9). You cannot pick a saga (Hard Parts 12) until you
-have named ownership (9) and workflow style (11).
+Each folder stands alone. You do not need another chapter open to
+follow the one you are reading.
 
 ## First edition vs second edition
 

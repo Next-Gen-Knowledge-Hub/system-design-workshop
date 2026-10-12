@@ -1,283 +1,119 @@
 # 11. Managing distributed workflows
 
-Companion notes for **Chapter 11** of *Software Architecture: The Hard
-Parts* (Ford, Richards, Sadalage, Dehghani, 2021).
+These notes teach how a business plot runs across services, from *Software Architecture: The Hard Parts* (Ford, Richards, Sadalage, Dehghani, 2021).
 
-Once you split a monolith, a customer action is no longer one function
-call. It is a **plot** that crosses services: open a ticket, reserve a
-tech, charge a card, send a notice. This chapter is who is allowed to
-know that plot, and where the sentence "we are on step 3 of 5" lives.
-Skip it and you will buy a message bus, call the result "decoupled,"
-and then spend a year asking every team where a ticket went.
+## A click becomes a plot
 
-Sagas, compensations, and the three-letter catalog are
-[ch. 12](../12-transactional-sagas/). This folder stops at **style and
-state**. Ownership of rows is [ch. 9](../9-data-ownership/). How you
-*read* another service's data is [ch. 10](../10-distributed-data-access/).
+Inside one process, opening a ticket is one function call. After that process is split, the same click is a plot that crosses services: write the ticket, reserve a technician, charge a card, send a notice. Support's question is no longer "which function threw?" It is "we are on step 3 of 5 — where is that sentence stored, and who is allowed to know the next step?"
 
-## See also (do not merge)
+That pair is the whole design: **style** and **state**. Style is who may know the next step. State is the record of which step this particular ticket has reached. The product that carries the bytes is a separate choice. A log, a queue, and an HTTP call are pipes. None of them picks the style. A queue of commands can still be orchestration. An HTTP call can still be orchestration. Publishing a fact can still be choreography. Judge the direction of knowledge.
 
-**Brokers, CDC, event time** — how a log is a data system — are
-[DDIA ch. 12](../../ddia/12-stream-processing/). **Derive, don't
-dual-write** (systems of record versus derived views) is
-[DDIA ch. 13](../../ddia/13-streaming-philosophy/). Neither chapter
-picks **orchestration versus choreography** as a business-process
-style. Kafka does not make you choreographed. HTTP does not make
-you orchestrated. The pipe and the plot are different jobs.
+An **architecture quantum** is the set of parts that ship and fail together. Workflow style is allowed to change at the boundary between quanta. It becomes unreadable when it changes on every arrow.
 
-## The mental model
+Two kinds of coupling show up in either style. **Static coupling** means one service's source names the next worker, so a change to the plot changes that source. **Semantic coupling** means services share the meaning of a fact and the order of the story, even when no source file names its neighbor. Counting topics does not measure either one. Who must change together does.
 
-Two ways to run a plot. Same services. Different owner of the story.
+## Orchestration
+
+After the split, nobody can see the plot. Support asks four teams. Timeouts fire in four places. A new step, such as a fraud check, means hunting every service that used to know the order.
+
+Orchestration puts a **conductor** in front of the participants. The conductor accepts the client's request, or an initial command. It calls participants in an order it owns. It writes a **workflow row**: workflow id, current step, each participant's status, a deadline, and correlation ids. Timeout, retry, and "we are done" run in that one process. Participants stay **plot-dumb**. Billing knows how to charge. Dispatch knows how to assign. Neither stores "I am step 2 of ticket-open."
+
+Walk one ticket.
+
+1. The client asks to open a ticket. The conductor creates workflow `w-1842` at step `open`.
+2. The conductor tells the ticket service to write the ticket. The ticket service writes its own row and replies. It does not know that a charge comes later.
+3. The conductor tells dispatch to reserve a technician. Dispatch assigns and replies.
+4. The conductor tells billing to charge the card. Billing charges and replies.
+5. The conductor marks `w-1842` complete.
 
 ```
-  ORCHESTRATION                         CHOREOGRAPHY
-
-  client                                    client
-    |                                         |
-    v                                         v
- [ CONDUCTOR ] --do this--> [ A ]         [ A ] --happened--> [ B ]
-    |   ^                   [ B ]           |                  |
-    |   | replies           [ C ]           +--happened--> [ C ]
-    |   +---------------------              (no boss; the plot
-    v                                        lives in reactions)
-  workflow row:
-  id | step | status | due
+client
+  |
+  v
+conductor -- open ticket --> ticket service
+  |  ^
+  |  +---- assign --------> dispatch
+  |  ^
+  |  +---- charge --------> billing
+  v
+workflow row: w-1842 | step | status | deadline
 ```
 
-The one sentence to remember a year from now: **a workflow has a
-state owner, and that owner is a coupling hub** — whether you drew a
-conductor box or pretended the events would remember for you.
+The row is updated after each reply, so a crash has a step to resume from. The calls may be synchronous HTTP, or commands on a queue. `ChargeCard` on a queue is still orchestration, because the conductor addressed billing by name and knew that billing was next. The protocol changed. The direction of knowledge did not. This shape is hub-and-spoke, which is also the sequence people draw once they have been paged and could not find the ticket.
 
-Two consequences fall out of the diagram. First, "we are event-driven"
-is not a style. Events are a transport. Style is **who is allowed to
-know the next step**. Second, if you cannot answer "where does this
-ticket's step live?" in one sentence, you do not have a workflow
-design. You have hope.
-
-## Orchestration communication style
-
-**Problem** — After the split, nobody can see the plot. Support asks
-four teams. Timeouts fire in four places. A new step (fraud check)
-means hunting every service that used to "just know."
-
-**Solution** — Put a **conductor** in front of the participants. The
-conductor:
-
-- accepts the client's request (or an initial command),
-- calls participants **in an order it owns**,
-- records **workflow state** (which step, which status, when to give
-  up),
-- handles timeout, retry, and "stop, we are done" in one process.
-
-Participants stay **plot-dumb**. Billing charges. Dispatch assigns.
-Neither service knows it is "step 2 of ticket-open." That knowledge
-is the conductor's job. Calls may be synchronous HTTP or asynchronous
-commands on a queue. The style is the same: **the conductor addresses
-the next worker by name.**
-
-This is hub-and-spoke. It is also how most humans already draw the
-sequence diagram on a whiteboard, which is why it is the default once
-someone has been paged.
-
-**Failure** — The conductor becomes a **god service**: it knows every
-domain, deploys when any step changes, and sits on the latency path
-of every customer action. Participants look "decoupled" from each
-other and are tightly coupled **to the hub**. If the hub is down, the
-plot is down — even if Billing and Dispatch are healthy. If you grow
-the hub until it *is* the old monolith with extra network hops, you
-paid twice.
-
-Orchestration is not "RPC is bad, messages are good." An orchestrator
-that emits *commands* (`ChargeCard`) is still orchestrating. An
-orchestrator that waits on HTTP is still orchestrating. Judge the
-**direction of knowledge**, not the protocol.
+The failure mode is the **god service**. The conductor learns every domain. It deploys whenever any step changes. It sits on the latency path of every customer action. Billing and dispatch look independent of each other, and both depend on the hub: when the hub is down, the plot is down, even while billing and dispatch are healthy. If the hub grows until it is the old monolith reached through network hops, the split was paid for twice.
 
 ## Choreography
 
-**Problem** — The hub is the bottleneck you split the monolith to
-escape. Every new plot step is a conductor release. Teams cannot
-ship a participant without a hub change. The conductor's source tree
-is a map of the whole company.
+Choreography has no service whose job is the plot. Participants **react to facts** and emit facts. The plot is the **graph of reactions**.
 
-**Solution** — Participants **react to facts** and emit facts. Open
-ticket writes its row and publishes `TicketOpened`. Dispatch listens,
-assigns a tech, publishes `TechAssigned`. Notify listens to that.
-There is no service whose job is "know the plot." The plot is the
-**graph of reactions**.
+The same ticket:
 
-What you gain is deploy independence on the happy path: Notify can
-add an SMS listener without asking the ticket service to call it.
-What you paid for in [ch. 2](../2-coupling/) as *static* hub coupling
-drops. *Semantic* coupling does not. Someone still designed "after
-open, assign." That someone is now **every subscriber**, and the
-design lives in YAML, topic names, and tribal memory.
-
-**Failure** — The plot becomes **undrawable**. A new engineer cannot
-find the workflow because it is not a workflow. It is eight listeners
-and a wiki. Changing the order (fraud check *before* charge) means
-coordinating every reaction that assumed the old order. Duplicate
-subscribers double-charge. A missed subscriber silently drops a
-step. "Who owns this customer journey?" has no on-call rotation.
-
-Choreography also tempts you to put **commands in fact clothing**.
-`ChargeThisCard` published as if it were `CardCharged` is orchestration
-with extra denial. If a downstream *must* run for the business to
-be correct, you have a plot, not a derived view. Derived views can
-lag; plots cannot pretend they are optional. That distinction is
-exactly why this folder does not merge with
-[DDIA ch. 13](../../ddia/13-streaming-philosophy/).
-
-## Workflow state management
-
-**Problem** — Support, timeouts, and "did we already charge?" all
-need the same question: **where is this instance?** After a crash,
-a retry, or a half-finished click, something must know.
-
-**Solution** — Name the state store on purpose.
-
-In orchestration, state is usually a **row the conductor owns**:
-`workflow_id`, current step, statuses of participants, deadline,
-correlation ids. The conductor is a state machine. You can query
-it. You can test it. You can expire it. That is the whole appeal.
-
-In choreography, state is **scattered**. Each participant has its
-own "I have seen this id" record. The global step is an emergent
-property: reconstruct it from events, or accept that you cannot
-answer Support in one query. Teams that get tired of this add a
-**tracker** (a service that listens to everything and writes a
-progress row). Notice what you just did: you built a conductor
-that does not send commands. The state owner returned through the
-side door.
-
-State is not "the database of record for tickets." Ticket rows are
-[ch. 9](../9-data-ownership/). Workflow state is **progress of the
-plot**: steps, waits, retries. Mixing them — storing "awaiting
-payment" as a column that five services update — is how you get
-joint ownership by accident.
+1. The ticket service writes its row and publishes `TicketOpened`.
+2. Dispatch listens, reserves a technician, and publishes `TechAssigned`.
+3. Billing listens for the fact it cares about and charges the card.
+4. The notifier listens and sends the message.
 
 ```
-  ticket row (domain fact)          workflow row (plot progress)
-  -----------------------           ---------------------------
-  id, customer, status              saga/workflow id
-  owner: Ticket service             step, retries, deadline
-                                    owner: conductor OR "nowhere"
+client -> ticket service --TicketOpened--> dispatch --TechAssigned--> billing
+                                 \                         \
+                                  +-----------------------> notifier
 ```
 
-**Failure** — Two common lies. One: "the message broker is the
-state." Brokers remember **messages**, not "step 3 succeeded and
-step 4 is waiting on a human." Two: "we will compute state from
-the event log when we need it." You can, if you treated the log as
-a system of record with retention, order, and a projection job —
-that is [DDIA ch. 12](../../ddia/12-stream-processing/) work, and
-you still have to *build the projection*. Until you do, Support
-greps Kibana.
+On the happy path, deploy independence is real. The notifier can add an SMS listener without a change that makes the ticket service call it. Static coupling to a hub drops, because the ticket service does not name its subscribers. Semantic coupling stays. Someone still decided "after open, assign." That decision now lives in every subscriber, in topic names, in YAML, and in what the team remembers.
 
-Idempotency sits next to state. The conductor retries; the listener
-redelivers. If "charge" is not keyed by `workflow_id + step`, you
-double-bill. State without idempotency is a retry storm with a
-dashboard.
+The failure mode is an undrawable plot. A new engineer finds eight listeners and a wiki, and cannot point at a workflow, because there is no workflow object. Inserting a fraud check before the charge means coordinating every reaction that assumed the old order. A duplicate subscriber charges the card twice. A missed subscriber drops a step, and no on-call rotation owns "this customer journey."
 
-## Trade-offs: state owner and coupling
+A second failure is a command dressed as a fact. A message named `ChargeThisCard` that orders billing to act is orchestration with the order hidden. A fact named `CardCharged` says the charge already happened. If a downstream step must run for the business to be correct, that step is part of the plot. A **derived view** is a different job: a copy computed from a **system of record**, such as a search index filled by change-data capture (a feed of row changes) from ticket facts. The system of record is where the fact is written as truth. Derive the view from that record. Writing the truth and the copy by hand — a dual-write — makes two writers. A derived view is allowed to lag. Event time, the timestamp carried on the fact itself, matters when you treat the log as a data system and fold it into that view. A required step is not an optional reaction, and a search index filled from the log is not a workflow.
 
-**Problem** — Reviews argue "orchestration vs events" as a moral
-choice. The dimensions are entangled: visibility, deploy coupling,
-failure handling, latency, and **who gets the 3 a.m. call**.
+## Where the current step lives
 
-**Solution** — Trade the **state owner**, not the fashion.
+Support, a timeout, and "did we already charge?" ask the same question: where is this instance? After a crash, a retry, or a click that finished halfway, some store has to know.
 
-| You want | Lean toward |
+Name the store. It is not the ticket table. A workflow design can answer, in one sentence, where this ticket's step lives.
+
+The **ticket row** is a domain fact: id, customer, the ticket's own status. The ticket service owns it. The **workflow row** is progress of the plot: workflow id (the id of this run), step, retries, deadline. In orchestration the conductor owns that row. The conductor is a state machine you can query, test, and expire. Mixing the two — a column such as `awaiting_payment` that five services update — is joint ownership by accident. Joint ownership means more than one service writes the same fact, so none of them can change it alone.
+
+In choreography, progress is scattered. Each participant keeps an "I have seen this id" record. The global step is an emergent property. You either reconstruct it from the events, or you accept that support cannot be answered in one query. Teams that tire of that add a **tracker**: a service that listens to every fact and writes a progress row. The tracker sends no commands. It is still a conductor. The state owner returned through the side door, and everyone who asks "where is this ticket?" now depends on it.
+
+A broker stores messages. It does not store "step 3 succeeded and step 4 is waiting on a human." You can compute that sentence from an event log when three things are true: the log is kept with retention long enough to be the system of record, order is preserved, and a projection job folds the log into a row. Until that job exists, support searches logs (the usual habit is to grep Kibana).
+
+**Idempotency** sits beside the state. The conductor retries. A listener is delivered the same message twice. If "charge" is not keyed by `workflow_id + step`, the retry bills the customer twice. State without that key is a retry storm with a dashboard.
+
+The timeout policy lives with the state owner. "We gave up" is a transition in the machine. A retry setting on the broker does not write that transition. If nobody owns the state, nobody owns the give-up.
+
+## Which owner you can stand
+
+"Orchestration versus events" is a bundled argument. The dimensions that actually move are visibility of the plot, which deploys are glued together, how failure is handled, latency, and who is paged at 3 a.m. Trade the state owner.
+
+| What you need | Where the state tends to live |
 |---|---|
-| One query for "where is this?" | Orchestration (or a tracker you admit is a hub) |
-| Timeout, compensate, give-up in one place | Orchestration — [ch. 12](../12-transactional-sagas/) is easier here |
-| Teams ship listeners without a hub release | Choreography |
-| The plot is short, linear, and changes often | Orchestration (change one machine) |
-| The plot is a cloud of optional reactions | Choreography (do not pretend it is a single machine) |
-| A participant must not know its neighbors | Orchestration |
-| A hub would become the company | Choreography, plus a way to *see* the graph |
+| One query for "where is this?" | A conductor, or a tracker you treat as a hub |
+| Timeout, compensate, and give-up in one place | A conductor |
+| Listeners that ship without a hub release | The reaction graph |
+| A short linear plot that changes often | A conductor, so one machine changes |
+| A cloud of optional reactions | Choreography, because it is not one machine |
+| A participant that must not know its neighbors | A conductor |
+| A hub that would become the whole company | Choreography, plus a way to see the graph |
 
-Coupling, from [ch. 2](../2-coupling/):
+A **compensation** is a later business action that undoes a step already committed, such as a refund. Orchestration gives the timeout, the compensation, and the give-up one place to run.
 
-- **Orchestration** concentrates **static** coupling on the
-  conductor. Participants are easy to replace *if* they keep the
-  same command/reply contract. The conductor's architecture
-  quantum grows with every plot it owns. Split conductors by
-  *plot* (checkout vs onboarding), not one ConductorService for
-  the firm.
-- **Choreography** lowers static coupling to a hub and raises
-  **semantic** coupling through event contracts. You will feel
-  that in [ch. 13](../13-contracts/): a "fat" event that carries
-  the whole ticket is a plot in a payload. Changing the plot
-  changes the stamp everyone already consumed.
+Orchestration concentrates static coupling on the conductor. A participant is replaceable when the command and the reply stay the same. The conductor's quantum grows with every plot it owns, because those plots ship and fail with the hub. Split conductors by plot family — checkout, onboarding, refund — so one ConductorService is not the firm.
 
-The state owner is the coupling hub **even when you hide it**. A
-"workflow engine" (Camunda, Temporal, Step Functions, homegrown
-table) is an orchestrator with better persistence. A "notification
-mesh" with an implicit order is choreography with worse
-persistence. Pick the owner. Then pick the product.
+Choreography lowers static coupling to a hub and raises semantic coupling through event contracts. A fat event that carries the whole ticket is the plot stuffed into a payload. That payload is a **stamp**: every consumer depends on the whole document. Changing the plot changes the stamp everyone already consumed.
 
-Hybrid is allowed and normal: **orchestrate the money path,
-choreograph the side effects**. Charge and assign are a plot.
-"Also index search, also tweet, also train a model" are derived
-reactions. Do not run those two jobs on one topic and one on-call.
+The state owner is the coupling hub even when the drawing hides it. A workflow engine — Camunda, Temporal, Step Functions, or a homegrown table — is an orchestrator with stronger persistence. If the engine addresses the next worker, it is a conductor with a nicer log, including when the messages it emits look like events. A notification mesh with an implicit order is choreography with weaker persistence. Pick the owner, then pick the product.
 
-A second hybrid shows up as **scale**: one conductor per *plot
-family* (checkout, onboarding, refund), not one ConductorService
-for the firm. That is granularity ([ch. 7](../7-service-granularity/))
-applied to the hub itself. A third: choreography among domains,
-orchestration **inside** a domain that still owns several steps.
-The style can change at a quantum boundary. It should not change
-every other arrow, or nobody can remember the rule.
+Three hybrids are ordinary.
 
-**Failure** — The out-of-context trap ([ch. 15](../15-trade-off-analysis/)):
-copying a big-tech event mesh into a ten-person shop, or copying
-a single BPMN engine into a company whose plots are actually
-independent notifications. Also: measuring "decoupling" by number
-of topics. Topics are not a coupling metric. **Who must change
-together** is. Also: calling a workflow engine "choreography"
-because it emits events. If the engine addresses the next worker,
-it is a conductor with a nicer log.
+Orchestrate the path that must be correct, and choreograph the side effects. Charge and assign are the plot: both have to happen. Indexing search, tweeting, and training a model are derived reactions; they may lag. A notice that must not roll back the charge is in that second group: the charge and the assignment stay on the conductor, and the notice is a reaction. Run those two jobs on different topics and different on-call rotations.
 
-## How this shows up when you design something
+Apply **granularity** to the hub. Granularity is how much behavior sits in one service. One conductor per plot family is that split. A chatty orchestrated plot — many small calls that always travel together — is a vote to merge those services into one quantum. Adding another conductor does not fix a split that was too fine. That case is a granularity bug. A style bug is different: one conductor for a cloud of optional reactions, or a hub that has become the company, or a workflow engine described as choreography while it still names the next worker.
 
-- Draw the plot as a sequence. Circle the box that is allowed to
-  know the next step. If you circled eight boxes, you chose
-  choreography. Say so.
-- Write down the state store: table, engine, or "reconstruct from
-  log" (and who builds the reconstruction).
-- For each step, mark **required for correctness** vs **optional
-  reaction**. Required steps are a workflow. Optional ones may be
-  derived data ([DDIA 13](../../ddia/13-streaming-philosophy/)).
-- Do not cite the broker as the architecture. Cite the style.
-- Granularity warning from [ch. 7](../7-service-granularity/): a
-  chatty orchestrated plot is a vote to **merge** services, not a
-  vote to add a conductor.
-- Timeout policy lives with the state owner. If nobody owns state,
-  nobody owns "we gave up." That is not a retry setting on the
-  broker; it is a transition you forgot to write.
+Change style at a quantum boundary. Domains can choreograph between each other while one domain orchestrates the several steps it still owns. Changing the rule on every other arrow means nobody can remember which arrow is which.
 
-## Check yourself
+The **out-of-context trap** is importing a conclusion from a shape you do not have. A large company's event mesh, copied into a ten-person shop, is one case. A single BPMN process engine — one central executable model of every process — copied into a company whose plots are independent notifications, is the other. In both, the coupling metric people reach for is the number of topics. The metric that matches the design is who must change together.
 
-1. A team says "we switched to events, so we are choreographed."
-   Name one design that uses events and is still orchestration.
-2. Who is the state owner in your last cross-service user action?
-   If the answer is "Kafka," what question can you still not
-   answer for Support?
-3. Why might adding a "workflow tracker" that only listens (never
-   commands) re-create orchestrator coupling?
-4. Ticket-open must charge, then assign, then notify. Notify
-   failing must not roll back the charge. Which steps are plot,
-   which are reactions, and which style fits each?
-5. Explain static vs semantic coupling for the two styles without
-   using the words "tight" or "loose."
-6. An orchestrator calls services over a queue, not HTTP. Did the
-   style change? What did?
-7. DDIA talks CDC into a search index. Is that a distributed
-   *workflow* in this chapter's sense? Why or why not?
-8. You need to insert a fraud check between assign and charge.
-   Walk the change in both styles. Who deploys?
-9. When is a god-orchestrator a granularity bug ([ch. 7](../7-service-granularity/))
-   rather than a style bug?
-10. "The log is the workflow." What extra machinery would make
-    that sentence true, and which book owns that machinery?
+## Recap
 
-Continue to [Transactional sagas](../12-transactional-sagas/).
+A distributed workflow is a plot across services and a named place where this run's step lives. Orchestration puts the next step in a conductor that addresses workers by name and stores the workflow row. Choreography puts the next step in reactions to facts, and the global step stays scattered until a tracker brings the state owner back. Required steps are the plot. Derived views may lag. The owner of the workflow state is the coupling hub, and that owner is who times out, retries, and gives up.

@@ -1,50 +1,31 @@
 # 9. Data ownership and distributed transactions
 
-Companion notes for **Chapter 9** of *Software Architecture: The Hard
-Parts* (Ford, Richards, Sadalage, Dehghani, 2021). After you split
-operational data ([ch. 6](../6-operational-data/)) and size services
-([ch. 7](../7-service-granularity/)), someone still has to be allowed
-to `UPDATE` the row. This chapter is **who may write**, and what you
-do when a business action now touches **two owners**. It is not a
-lesson in isolation levels.
+These notes teach who may write, and what replaces one commit across owners, from *Software Architecture: The Hard Parts* (Ford, Richards, Sadalage, Dehghani, 2021).
 
-Skip it and every service will write every table “just this once,”
-or you will reach for a distributed transaction coordinator because
-the word “transaction” appeared in a meeting. You will get neither
-clear ownership nor a store that can abort cleanly.
+## Ownership is a write permission
 
-## See also (do not merge)
+After operational data is split and services are sized, someone still has to be allowed to `UPDATE` the row. This lesson is who may write, and what you do when a business action touches two owners. It is not a lesson in isolation levels.
 
-**Who may write across services** is this folder.
-**What isolation means inside one database** is
-[DDIA ch. 8](../../ddia/8-transactions/). Serializability, write
-skew, SSI, and 2PC as a *commit protocol* live there. Do not
-import “just set SERIALIZABLE” into a design that already
-crosses two data domains — that knob does not span HTTP.
+An **architecture quantum** includes the data a service writes. **Ownership** is the write permission on a table or on the columns that can change: which process holds the credential and the migration repository. **Single ownership** means one service is the system of record. **Common ownership** means reference data with a boring change process. **Joint ownership** means two or more services both write the same table or overlapping columns. Joint ownership is an unmade decision. “We share the table but we’re careful” is joint ownership.
 
-**Making replicas agree so they look like one copy** is
-[DDIA ch. 10](../../ddia/10-consistency-and-consensus/)
-(linearizability, Raft, etcd). That is not “eventual
-consistency” as this chapter uses it. Here, eventual means an
-**application protocol** between owners: background job,
-request-path orchestration, or events. Consensus is how a
-*cluster* elects a leader. Do not paste quorum diagrams into
-a saga review.
+A business action that used to be one `BEGIN` / `COMMIT` now crosses owners. You lost that atomic commit. Consistency across owners is an application protocol, not a database flag. Each owner commits locally. The pair of facts converges later by a background job, by a request that calls both and can compensate, or by an event the second owner consumes. That is what **eventual consistency** means here.
 
-Replica *lag* inside one product is
-[DDIA ch. 6](../../ddia/6-replication/). How another *service*
-is allowed to see your facts is
-[ch. 10](../10-distributed-data-access/). Keep those three
-apart: cluster copies, app-level catch-up, read paths.
+Three neighboring ideas use the same English words and do different jobs.
 
-## The mental model
+Isolation inside one database — serializability, write skew, snapshot isolation — is a knob on that one store. It does not span an HTTP call. Turning the knob up does not assign an owner.
+
+Making replicas of one cluster agree so they look like one copy is a consensus problem. A protocol such as Raft elects a leader so the cluster can present one value. That is not an application catching up between two services, and it does not assign table owners. A design sentence that says “eventual consistency” and “Raft” in the same breath has merged those jobs.
+
+A follower replica lagging its leader, inside one database product, is that product’s copy falling behind. How another *service* is allowed to see your facts is a read pattern: a call, a column copy, a cache, or a serving view. Keep the three apart: cluster copies, application catch-up between owners, and read paths.
+
+The book’s ticketing case is a label for “two teams think they own the assignment columns.” The same fight is inventory versus orders, profile versus identity, or wallet versus ledger.
 
 ```
   a row (or table) in operational data
 
        who is allowed to WRITE?
               |
-              +-- SINGLE owner ---- others read (see ch. 10)
+              +-- SINGLE owner ---- others read by a defined pattern
               |
               +-- COMMON owner ---- reference data; junk-drawer risk
               |
@@ -57,357 +38,154 @@ apart: cluster copies, app-level catch-up, read paths.
 
   a business action that needs two owners
               |
-              you lost BEGIN/COMMIT across the seam
+              each side commits locally; the pair is not one COMMIT
               |
-              +-- 2PC / XA           --> DDIA 8, not your architecture
-              +-- background sync    --> lag, simple
-              +-- orchestrated req.  --> user waits, compensate
-              +-- event-based        --> loose, “has it happened?”
+              +-- two-phase commit     couples availability; not the architecture
+              +-- background sync      lag, simple, wrong for the live session
+              +-- orchestrated request user waits, compensate on failure
+              +-- event-based          loose; “has it happened yet?”
 ```
 
-The sentence to keep: **ownership is a write permission; consistency
-across owners is an application protocol, not a database flag.**
+Every service writing every table “just this once” destroys ownership. Reaching for a distributed transaction coordinator because the word “transaction” appeared in a meeting gives you neither a clear owner nor a store that can abort the whole action cleanly.
 
-Two consequences. First, “we share the table but we’re careful”
-is joint ownership, which is an unmade decision. Second, “eventual
-consistency” in a design doc that also says “Raft” is a merged
-chapter; send the author to the See also links.
+## Single ownership
 
-The book’s ticketing/field-ops case is only a label for “two
-teams think they own the assignment columns.” Your version will
-be inventory vs orders, profile vs identity, or wallet vs ledger.
+One service is the system of record. It is the only process with write credentials. Everyone else asks it to change the row, or reads a copy.
 
-## Assigning ownership
+After a split, two object-relational maps still point at `tickets`. Revoke the other writers. Reads go through an API, a replica of the owner’s own database, a cache, or a column copy in the reader’s store. The owner remains the only truth.
 
-Every table (and eventually every column that can be updated)
-needs a story. Three stories exist. Pick one on purpose.
+“Owner” on a wiki, with write credentials still in three secret stores, is not ownership. Ownership is the credential and the migration repository.
 
-### Single ownership
+Single ownership is the default. It makes a service boundary real, because the quantum includes the data. The cost is that every foreign fact is a seam. Pay for that seam with a read pattern. Do not pay for it with a second writer “for convenience.”
 
-One service is the **system of record**. It is the only process
-with write credentials. Everyone else asks, or reads a copy.
+## Common ownership
 
-**Problem** — After a split, two ORMs still point at `tickets`.
-**Solution** — One owner. Revoke the other writers. Reads go
-through an API, a replica, a cache, or a column copy
-([ch. 10](../10-distributed-data-access/)).
-**Failure mode** — “Owner” in a wiki, write creds still in
-three secrets managers. Ownership is the credential and the
-migration repo, not the slide.
+Some data is not a domain’s heart, and everyone needs it: country codes, holiday calendars, reason-code lists, maybe a company-wide service-region table. No team feels like the product owner. Every team feels like a reader who occasionally inserts a row.
 
-Single ownership is the default you want. It makes
-[granularity](../7-service-granularity/) real: the quantum
-includes the data. The cost is **every foreign fact is a seam**.
-Pay it with ch. 10, not with a second writer “for convenience.”
+Reference data that lives in the leftover monolith schema because “it isn’t really ours” still needs an owner. Give it a small reference-data quantum, or an explicit common store with a change process: who may add a code, how the list versions, how consumers hear. Treat it as a product with a boring objective.
 
-### Common ownership
+Common becomes a junk drawer when audit columns, feature flags, and “misc” land there. Common is for slowly changing reference facts, not for anything with a life cycle. The moment a table has workflows, it needed a single owner.
 
-Some data is **not a domain’s heart** but everyone needs it:
-country codes, holiday calendars, reason-code lists, maybe a
-company-wide “service region” table. No team feels like the
-product owner; every team feels like a reader who occasionally
-inserts a row.
+Common ownership is an integrator pretending to be a kindness. Audit it twice a year. If two domains fight over writes, it was never common. It was joint.
 
-**Problem** — Reference data lives in the monolith leftover
-schema because “it isn’t really ours.”
-**Solution** — Give it an owner anyway: a small reference-data
-quantum, or an explicit **common** store with a change process
-(who may add a code, how it versions, how consumers hear).
-Treat it as a product with a boring SLA.
-**Failure mode** — Common becomes a **junk drawer**: audit
-columns, feature flags, “misc.” Common is for *slowly changing
-reference* facts, not for anything with a life cycle. The
-moment a table has workflows, it needed single ownership.
+Mis-labeling joint as common is how a balance, an assignee, or a status machine ends up in the shared drawer. Last write wins, and the change process for country codes is now the change process for money.
 
-Common ownership is an integrator pretending to be a kindness.
-Audit it twice a year. If two domains fight over writes, it
-was never common; it was joint.
+## Joint ownership
 
-### Joint ownership
+Two or more services both write the same table or overlapping columns. This is the usual leftover of a service split that assigned code and never assigned tables.
 
-Two (or more) services **both write** the same table or
-overlapping columns. This is the usual leftover of a service
-split that did not finish [ch. 6](../6-operational-data/)
-assignment.
+Dispatch updates `assignee`. The ticket service updates `assignee`. Last write wins. Nobody can explain a missing technician.
 
-**Problem** — Dispatch updates `assignee`; the ticket service
-updates `assignee`; last write wins; nobody can explain a
-missing technician.
-**Solution** — Do not live here. Joint is a **transitional
-diagnosis**. Resolve it with one of the four techniques
-below.
-**Failure mode** — Row-level conventions (“we only touch our
-columns”) without DB enforcement. Someone adds a trigger, a
-batch job, or a one-off SQL and the convention dies. If the
-database cannot tell the writers apart, you do not have a
-design.
+Do not live here. Joint ownership is a transitional diagnosis. Resolve it with one of the four techniques below.
 
-Joint ownership is also how **lost updates** return — not as
-an isolation anomaly inside one txn
-([DDIA ch. 8](../../ddia/8-transactions/)), but as two
-applications stomping a field with no common snapshot. Same
-pain, different layer. Do not “fix” it by turning up
-isolation on a store that is not the only writer.
+Row-level conventions — “we only touch our columns” — without the database enforcing the writers, die the day someone adds a trigger, a batch job, or a one-off SQL statement. If the database cannot tell the writers apart, you do not have a design.
 
-## Joint techniques
+Joint ownership is also how lost updates return. Inside one transaction, a lost update is an isolation anomaly: two transactions read the same row and each writes back, and one overwrites the other because they did not share a strict enough snapshot. Here, two applications stomp a field and there is no common snapshot at all. The user sees the same bug. The layer is different. Raising the isolation level on a store that is not the only writer does not fix the second writer.
 
-Four ways out. They are not equally polite.
+Two connection strings that can both `INSERT` into `orders` are joint ownership. Pick a technique before you catalog sagas.
+
+## Four ways out of joint ownership
+
+They are not equally polite.
 
 ### Table split
 
-**Problem** — The table is a sandwich of two domains’ columns
-(ticket header vs assignment/routing vs billing snapshot).
-**Solution** — Split **tables** (or obvious column groups)
-so each owner has a private relation, keyed by a shared id.
-Writes no longer collide. Reads that need both go to ch. 10.
-**Failure mode** — Split tables, keep a view that is
-*writable*, or a trigger that copies both ways forever. You
-have dual-write with extra DDL.
+The table is a sandwich of two domains’ columns: a ticket header, assignment and routing, a billing snapshot. Split tables, or split obvious column groups, so each owner has a private relation keyed by a shared id. Writes no longer collide. A read that needs both becomes an access pattern: call, copy, cache, or a serving view.
 
-Split along **invariants**, not along “this column is a
-string.” If `status` is part of both life cycles, splitting
-the table without splitting the status machine just moves
-the fight to a new name.
+Split along invariants, not along “this column is a string.” If `status` is part of both life cycles, splitting the table without splitting the status machine moves the fight to a new name.
 
-### Data domain
+Split tables that keep a writable view, or a trigger that copies both ways forever, are dual-write with extra schema. You still have two writers.
 
-**Problem** — The contested data is a **third** concept
-(assignment, wallet, entitlement) that neither existing
-service should own.
-**Solution** — Create a new data domain (and likely a
-service) whose job is that concept. Both former writers
-become clients. This is an extractor, not a rename.
-**Failure mode** — A “domain” that is only a pass-through
-`UPDATE` with no extra invariant. You added a hop and kept
-the joint write in spirit. New domains need a reason to
-exist beyond peacekeeping.
+### A new data domain
 
-This technique shows up when [granularity](../7-service-granularity/)
-said the *verb* was a product. Ownership must follow that
-verb into its own store, or you only split the code.
+The contested data is a third concept — assignment, a wallet, an entitlement — that neither existing service should own. Create a new data domain, and likely a service, whose job is that concept. Both former writers become clients. This is an extractor, not a rename.
+
+A “domain” that is only a pass-through `UPDATE`, with no extra invariant, adds a hop and keeps the joint write in spirit. A new domain needs a reason to exist beyond peacekeeping.
+
+This is the technique that follows when a verb was actually a product: the routing algorithm, the wallet, the entitlement check. Ownership has to follow that verb into its own store. Splitting only the code leaves both sides writing the old table.
 
 ### Delegate
 
-**Problem** — Service B needs a mutation that belongs in
-A’s table. Giving B a password would be joint ownership.
-**Solution** — **A remains the only writer.** B asks A
-(command, RPC, message A consumes). A enforces invariants
-and commits locally.
-**Failure mode** — Delegate in name, `UPDATE` in a “break
-glass” job that runs from B’s pipeline. Also: a chatty
-delegate on the user path that should have been a table
-split or a merge.
+Service B needs a mutation that belongs in A’s table. Giving B a password would be joint ownership. A remains the only writer. B asks A, by a command, a call, or a message A consumes. A enforces the invariants and commits locally.
 
-Delegate is the technique that preserves a **single owner**
-without pretending B never needed the side effect. It is
-also how you get a workflow ([ch. 11](../11-distributed-workflows/)).
-If almost every request is a delegate, you may have split
-the wrong seam — consolidation is allowed.
+Delegate preserves a single owner without pretending B never needed the side effect. The sequence of asks is a workflow: someone has to hold the in-flight state if more than one owner is involved.
+
+Delegate in name, with an `UPDATE` in a break-glass job that runs from B’s pipeline, is joint ownership again. A chatty delegate on the user path, where almost every request is “please write this for me,” means the seam was wrong. A table split or a merge is allowed.
 
 ### Service consolidation
 
-**Problem** — The two services are in a permanent 2-phase
-dance, share code, share data relationships, and the
-disintegrators never paid off.
-**Solution** — Merge them. One quantum, one database, one
-transaction. This is [ch. 7](../7-service-granularity/)
-integrators winning after a field test.
-**Failure mode** — Consolidation as taboo. A year of sagas
-for a `status` flag is not “event-driven maturity.” It is
-an unfinished split.
+The two services are in a permanent two-step dance. They share domain code, they share write-time relationships, and the reasons to split never paid off. Merge them. One quantum, one database, one transaction. The integrators won after a field test.
 
-Use consolidation when the **write-time invariant** is the
-product and the user cannot be shown an in-between state.
-Use it late enough that you learned, early enough that the
-saga machinery has not become a religion.
+Consolidation treated as taboo produces a year of sagas for a `status` flag. That is not event-driven maturity. It is an unfinished split.
 
-## Distributed transactions (why 2PC is the other chapter)
+Use consolidation when the write-time invariant is the product and the user cannot be shown an in-between state. Use it late enough that you learned from the split, and early enough that the saga machinery has not become a religion.
 
-When one business action must mutate two owners, people say
-“distributed transaction.” Be precise.
+## Why two-phase commit is not the architecture
 
-**Two-phase commit** is a protocol: prepare, then commit or
-abort, so several *resource managers* agree whether **this
-atomic unit** happened. Blocking, in-doubt sessions, a
-coordinator that must not forget. Heterogeneous XA (Postgres
-+ Kafka + search in one txn) is operationally infamous.
-That material — including when DB-internal 2PC is sane
-inside **one product** — is
-[DDIA ch. 8](../../ddia/8-transactions/). Read it there.
+When one business action must mutate two owners, people say “distributed transaction.” Be precise.
 
-**This chapter’s job** is to refuse 2PC as the *shape of
-your service architecture*. If every cross-owner action is
-a distributed atomic commit, you have rebuilt one database
-out of network calls, with worse failure modes
-([DDIA ch. 9](../../ddia/9-distributed-trouble/) on partial
-failure — mention only).
+**Two-phase commit** is a protocol. A coordinator asks each resource manager to prepare, then tells them all to commit or all to abort, so they agree whether this atomic unit happened. It blocks. It leaves in-doubt sessions. The coordinator must not forget the outcome. Heterogeneous XA is operationally infamous. XA is the interface a coordinator uses to run two-phase commit across different products. The case people mean is one transaction spanning Postgres, Kafka, and a search index. Inside *one* database product, an internal two-phase commit can be a sane way for that product to commit its own resources. That is a property of the engine.
 
-**Problem** — After the split, “open ticket and reserve
-part” used to be one `COMMIT`.
-**Solution** — Either **don’t split that invariant**
-(consolidate / keep one domain) or accept **a window**
-where the world is half-updated and design how you close
-it (next section).
-**Failure mode** — 2PC across two microservices’ databases
-as the default. You paid for independent deploy and then
-coupled their availability at prepare-time. You also did
-not get isolation across the pair the way a single engine
-would; you got atomic *commit*, which is not the same
-gift.
+The architectural refusal is different. If every cross-owner action is a distributed atomic commit, you have rebuilt one database out of network calls, with worse failure modes. Networks lose responses. A caller can time out after the work succeeded and not know which. Partial failure is normal, not exceptional.
 
-If a vendor says “our mesh does distributed transactions,”
-translate: either 2PC in a tuxedo, or a saga with
-marketing. Name which. Sagas themselves are
-[ch. 12](../12-transactional-sagas/); this chapter only
-needs you to know **why you left 2PC** and **what three
-application patterns replace the *feeling* of one commit**.
+“Open ticket and reserve a part” used to be one `COMMIT`. Either do not split that invariant — consolidate, or keep one data domain — or accept a window where the world is half-updated and design how you close it.
 
-## Eventual consistency patterns
+Two-phase commit across two services’ databases, as the default, spends the independent deploy and then couples their availability at prepare time. You also do not get the isolation a single engine would give the pair. You get atomic *commit*, which is not the same gift.
 
-“Eventual” here means: **each owner commits locally**; the
-*pair* of facts converges later by an application mechanism.
-It is not replica repair inside Cassandra, and it is not
-Raft.
+A vendor who says “our mesh does distributed transactions” is offering one of two things: two-phase commit in a tuxedo, or a saga with marketing. Name which. A **saga** is the application protocol that replaces the feeling of one commit: each owner commits locally, and a failed later step runs a compensating action. The saga’s state machine, and who drives it, is a further design. This lesson only needs why you left two-phase commit, and which of the three patterns below replaces the feeling.
 
-All three patterns need **idempotency** and a story for
-“the user asked, we timed out, we do not know.” Timeouts
-are [DDIA ch. 9](../../ddia/9-distributed-trouble/); the
-architectural choice of *how you sync* is here.
+## Three ways the pair of facts converges
+
+“Eventual” here means each owner commits locally and the pair converges later by an application mechanism. It is not replica repair inside a wide-column cluster, and it is not Raft electing a leader.
+
+All three patterns need **idempotency**: doing the same request twice does not double the effect. All three need a story for “the user asked, we timed out, we do not know.” A timeout is not a clean failure. The response can be lost after the remote side committed. The architectural choice is *how you sync*. The uncertainty is a property of the network either way.
 
 ### Background synchronization
 
-A job (cron, poller, nightly) reads A and updates B, or
-diffs them and repairs.
+A job — a cron, a poller, a nightly run — reads A and updates B, or diffs them and repairs. B must roughly match A, and a delay of minutes to hours is allowed: reporting, a search index, denormalized display names, a cache of region names.
 
-**Problem** — B must roughly match A; a delay of minutes
-to hours is allowed (reporting, search index, denormalized
-display names, cache of region names).
-**Solution** — Periodic reconcile, preferably from the
-**system of record** outward. Make it restartable. Alert
-on lag, not only on job failure.
-**Failure mode** — Background sync for **money or
-inventory** the user will act on in the same session.
-Also: two-way sync (“whoever is newer”). You built
-multi-leader without saying so
-([DDIA ch. 6](../../ddia/6-replication/) is that monster;
-do not reimplement it in Python).
+Reconcile periodically, preferably from the system of record outward. Make the job restartable. Alert on lag, not only on job failure.
 
-Background is the cheapest pattern and the least honest
-with the user. Fine for derived data. Insulting for
-checkout.
+Background sync for money or inventory the user will act on in the same session lies to that session. Two-way sync — “whoever is newer” — is multi-leader replication built in application code: two copies both accept writes and then try to reconcile conflicts. That conflict handling is a hard problem inside one database product. Reimplementing it as a Python job does not make it easier. Stop the reverse pipe.
+
+Background is the cheapest pattern and the least honest with the user. It fits derived data. It is an insult at checkout. A nightly job that repairs checkout is the wrong family. Promote that pair to a request-path protocol or to events, or merge the services.
 
 ### Orchestrated request-based
 
-In the **user’s request**, an orchestrator (or the
-originating service) calls owner A, then owner B. If B
-fails, it tries to undo A (compensate) or retries B
-before returning.
+In the user’s request, an orchestrator — or the originating service — calls owner A, then owner B. If B fails, it tries to undo A (compensate) or retries B before returning. The user cannot be told “we’ll settle overnight.” They need a yes or a no now, and you still refuse two-phase commit.
 
-**Problem** — The user cannot be told “we’ll settle
-overnight.” They need a yes/no now, but you still refuse
-2PC.
-**Solution** — Request-path orchestration with explicit
-**compensation** and a timeout budget. The orchestrator
-owns the in-flight state for that request. This previews
-[ch. 11](../11-distributed-workflows/) (who holds
-workflow state) and [ch. 12](../12-transactional-sagas/).
-**Failure mode** — Happy-path calls, no undo, hope. Or
-compensation that is not idempotent (refund twice). Or
-an orchestrator that is “just the API gateway” with no
-durability — a crash after A committed and before B
-started is now a ghost.
+The orchestrator owns the in-flight state for that request, with an explicit compensation and a timeout budget. Holding workflow state, and the saga’s compensating steps, are the next designs. This pattern is the preview: the user waits, and undo is part of the protocol.
 
-Request-based is **tighter coupling** than events: A and
-B must be up together for the user action. You kept a
-slice of the old transaction’s *timing* without its
-atomic commit. Say that out loud so nobody thinks you
-still have `ROLLBACK`.
+Happy-path calls with no undo are hope. Compensation that is not idempotent refunds twice. An orchestrator that is “just the API gateway,” with no durable state, loses the plot on a crash after A committed and before B started. That case is now a ghost: A’s side effect exists, and nobody remembers to finish or undo it.
+
+Request-based coupling is tighter than events. A and B must be up together for the user action. You kept a slice of the old transaction’s *timing* without its atomic commit. Say that out loud so nobody thinks you still have `ROLLBACK`.
 
 ### Event-based
 
-Owner A commits locally and emits an event (outbox if
-you are doing it honestly — the outbox *mechanics* sit
-with [DDIA ch. 8](../../ddia/8-transactions/) /
-[ch. 12](../../ddia/12-stream-processing/); the
-*architectural choice* to sync this way sits here).
-Owner B consumes and commits its own store.
+Owner A commits locally and emits an event. Owner B consumes it and commits its own store. You want the owners to deploy and fail independently. A lag of seconds is tolerable. Many consumers may care.
 
-**Problem** — You want owners to deploy and fail
-independently; a lag of seconds is tolerable; many
-consumers may care.
-**Solution** — Events as the cross-owner protocol.
-Document **what B may assume**, how duplicates are
-ignored, and how you detect a stuck consumer.
-**Failure mode** — Dual-write app→DB and app→bus
-without an outbox (split brain on crash). Or treating
-“eventual” as “we don’t measure.” Or using the event
-payload as a remote `UPDATE` API so every schema
-change breaks the fleet ([ch. 13](../13-contracts/)).
+The honest write is an **outbox**: A inserts the business row and the outgoing event record in the same local transaction. A separate publisher reads that outbox and puts the event on the bus. The architectural choice to sync this way sits here. The crash window the outbox closes is mechanical: without it, the application writes the database and the bus in two calls, and a crash between them splits the brain. One side has the fact. The other never will, or the bus has an event for a row that rolled back.
 
-Event-based is not consensus. B can be behind; a
-read-your-writes user may see A’s fact and not B’s.
-If that user experience is forbidden, you wanted
-request-based, a single owner, or a read pattern from
-[ch. 10](../10-distributed-data-access/) that is honest
-about freshness.
+Document what B may assume, how duplicates are ignored, and how you detect a stuck consumer. “Eventual” with no measurement is not a pattern.
 
-### Choosing among the three
+Using the event payload as a remote `UPDATE` of B’s private schema means every change to A’s fields breaks the fleet. Callers are coupled to the stamp of the payload. Send the fact B is allowed to depend on, and let B own its tables.
+
+Event-based sync is not consensus. B can be behind. A user who just wrote to A may read B and miss the fact. If that experience is forbidden, you wanted the request-based pattern, a single owner, or a read pattern that states its freshness instead of pretending the copy is current.
+
+### Picking one
 
 | Pattern | User sees | Coupling | Typical fit |
 |---|---|---|---|
-| Background | Stale until the job | Lowest at runtime | Derived, reports, slow reference |
-| Orchestrated request | Wait / error now | High on the path | Checkout-like, must answer |
-| Event-based | “Accepted”; B catches up | Low runtime, contract coupling | Multiple consumers, independent deploy |
+| Background | Stale until the job | Lowest at runtime | Derived data, reports, slow reference |
+| Orchestrated request | Wait, or an error now | High on the path | Checkout-like; must answer |
+| Event-based | “Accepted”; B catches up | Low at runtime, coupling through the contract | Several consumers, independent deploy |
 
-**Problem** — A diagram that says “eventually consistent”
-with no box from this table.
-**Solution** — Pick a row. Write the lag SLO and the
-compensation (or the “we show stale”) sentence.
-**Failure mode** — Mixing all three for the same pair of
-tables “for resilience.” You cannot debug three protocols
-on one invariant.
+A diagram that says “eventually consistent” with no row from this table has not picked a mechanism. Pick a row. Write the lag you allow, and write either the compensation or the sentence “we show stale.”
 
-## How this shows up when you design something
+Mixing all three for the same pair of tables “for resilience” leaves three protocols on one invariant. You cannot debug that. A team that proposes two-phase commit *and* events *and* a nightly reconcile for the same two tables deletes down to one application pattern first. An ownership technique — table split, a new domain, delegate, or consolidate — may remove the need for any of them.
 
-- Two `DATABASE_URL`s, both with `INSERT` on `orders`:
-  joint ownership. Pick a technique before a saga catalog.
-- “We’ll add 2PC.” Send them to DDIA 8, then ask which
-  *application* pattern they meant.
-- “Raft will keep the services consistent.” That sentence
-  merged DDIA 10 into this chapter. Raft does not assign
-  table owners.
-- A nightly job that repairs checkout: wrong pattern
-  family. Promote to request or events, or merge services.
+“Raft will keep the services consistent” does not survive review. Raft elects a leader inside a cluster. It does not decide who may `UPDATE` the row.
 
-## Check yourself
+## Recap
 
-1. Single vs common vs joint: give a production table for
-   each. What goes wrong if you mis-label joint as common?
-2. Why is a wiki owner plus three write credentials a
-   failure mode of *single* ownership?
-3. Table split vs new data domain: both create a boundary.
-   When is the contested data *not* a sandwich of columns
-   but a third product?
-4. Delegate vs consolidate: what hop-count or invariant
-   would make you merge instead of asking A to write?
-5. State, in one sentence, why 2PC is the DDIA chapter.
-   What do you still have to design if you refuse it?
-6. Isolation (write skew) vs two services writing one
-   column: same user-visible bug, different layer. How
-   would you tell which you have?
-7. Why is “eventual consistency” in this chapter not
-   linearizability and not replica repair? Steal the See
-   also lines, then give a counterfeit sentence you would
-   reject in review.
-8. Background vs request-based: pick a user action that
-   must not use background, and a derived view that must
-   not use request-based. Why?
-9. Event-based sync: name two failure modes that are
-   *application* (not Kafka configuration). Include one
-   about dual-write.
-10. A team proposes 2PC *and* events *and* a nightly
-    reconcile for the same two tables. What do you make
-    them delete first, and which ownership technique
-    might remove the need?
-
-Continue to [Distributed data access](../10-distributed-data-access/).
+One writer per table is the default: the credential, not the wiki. Common ownership is for slowly changing reference data, audited so it does not become a junk drawer. Joint ownership is transitional; leave it by splitting tables along invariants, extracting a real third domain, delegating the write to the single owner, or merging the services. Two-phase commit across service databases couples availability and is not the architecture. The pair of facts then converges by a background job, by a request-path orchestrator that can compensate, or by events with an outbox — one pattern per invariant, with idempotency and a timeout story.

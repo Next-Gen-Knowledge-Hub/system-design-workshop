@@ -1,399 +1,189 @@
-# 4. Architectural decomposition
+# Architectural decomposition
 
-Companion notes for **Chapter 4** of *Software Architecture: The Hard Parts*
-(Neal Ford, Mark Richards, Pramod Sadalage, and Zhamak Dehghani; O'Reilly,
-October 2021).
+Software Architecture: The Hard Parts, Ford, Richards, Sadalage, Dehghani, O'Reilly 2021, Chapter 4.
 
-Chapter 3 said *why* you might split. This chapter asks **whether the
-codebase will let you**, and **which extraction style to use**. Skip it
-and you will announce a service cut on a ball of mud: cycles you cannot
-see, a "utils" component everyone depends on, a fork you never delete
-from. The drivers stay real. The seam does not exist yet. Decomposition
-is a property of the code plus a method, not a staff meeting.
+## What decomposition decides
 
-## The mental model
+A **driver** is a characteristic that is already bad because too much sits in one place: the system is hard to change, hard to test, hard to ship, hard to scale, or one failure takes down an unrelated workflow. Drivers say why a seam would help. Decomposition asks whether the code will allow a cut, and which extraction style to use.
 
-```
-  abstract ^
-           |  zone of uselessness
-           |   (abstract AND unstable)
-           |
-  Ce-heavy |            *  main sequence
-  (unstable)            *   A + I ~= 1
-           |            *
-           |            *
-           |  zone of pain
-           |   (concrete AND stable: everyone
-           v    depends on a god class/table)
-         concrete              Ca-heavy (stable) -->
-```
+You cannot extract what you cannot see. **Afferent coupling**, **efferent coupling**, and distance from the **main sequence** tell you whether a seam is real. Then you choose **component-based decomposition** or **tactical forking** on purpose.
 
-The one sentence to remember a year from now: **you cannot extract what
-you cannot see** — afferent/efferent coupling and distance from the
-main sequence tell you if a seam is real, and then you choose
-component-based decomposition or tactical forking on purpose.
+A few terms the measures use:
 
-Two consequences fall straight out of that diagram. First, a component
-that is both *concrete* and *stable* (lots of incoming deps, no
-abstractions) is a trap: everyone needs it, nobody can change it,
-extraction will drag the universe. Second, if you cannot measure those
-arrows, you are guessing; guessing is how you pick the wrong
-decomposition approach.
+- A **component** is a clump at a grain you might extract. A class is almost never that grain. The whole application is too coarse.
+- A **quantum** is the smallest set of code and data you can deploy independently and still have it hang together. High **static coupling** inside it is expected: imports, tables, and internal calls that ship together. Static coupling across a hoped-for cut means the cut is not real yet.
+- **Cohesion** means the code and data in that quantum change for one business reason. Driving every internal dependency to zero destroys that.
+- An **ADR** is a short dated record: context, one decision, consequences. A **fitness function** is an automated check that a claimed property still holds.
 
-## Is the codebase decomposable?
+A component that is both concrete and stable — many incoming dependencies, no abstraction — is a trap. Everyone needs it, nobody can change it, and extraction drags the rest of the graph along. If those arrows cannot be measured, the choice of method is a guess.
 
-A codebase is **decomposable** when you can name components, see how
-they depend on each other, and find a cut that does not require
-rewriting half the graph in one move. "We have packages" is not that.
-Packages that are layers (`controllers/`, `services/`, `repos/`) often
-hide the domain seams chapter 3 wanted.
+## When the code is decomposable
 
-Ask, in this order:
+A codebase is **decomposable** when you can name components, see how they depend on each other, and find a cut that does not rewrite half the graph in one move. Packages by themselves are not that. Layer packages (`controllers/`, `services/`, `repos/`) often hide the domain seams the drivers pointed at.
 
-1. Can we point at **components** at a useful grain (not a class, not
-   the whole app)? If not, [ch. 5](../5-component-patterns/) has to
-   run *before* any extraction.
-2. Can we **see dependencies** between those components (including
-   cycles, and including *data*: tables, shared types)?
-3. Are there **sinks of pain** — concrete, widely depended-on clumps
-   that will poison every cut?
-4. Is the graph bad enough that analysis is slower than copying the
-   mudpile and deleting? That is the forking question, not a moral
-   one.
+Work in this order:
 
-If (1) or (2) is "no," the system is not decomposable *yet*. The work
-is to make it analyzable. Pretending otherwise produces a new repo
-that still imports the old one.
+1. Point at components at a useful grain. If the only names are classes or "the app," identification comes before any extraction.
+2. List dependencies between those components, including cycles, and including data: tables and shared types.
+3. Find **sinks of pain**: concrete clumps that many others depend on, which will poison every cut.
+4. Compare the cost of analysis with the cost of copying the mudpile and deleting. When analysis is slower, that comparison chooses forking. It is not a verdict on the team.
 
-**Problem** — Leadership funded "extract billing" because the
-[modularity drivers](../3-modularity/) were real. Engineering starts
-at the HTTP boundary and discovers every billing call touches
-`WorkOrder`, `UserContext`, and a static `AppState`.
+If the first or second check fails, the system is not decomposable yet. The work is to make it analyzable. A new repository that still imports the old one is the result of skipping that.
 
-**Solution** — Spend a week on the graph, not on Kubernetes. Tools
-(language analyzers, ArchUnit, `jdeps`, import graphs, even a
-spreadsheet of package edges) beat intuition. The running label is
-still the book's ticketing/field-ops case: you are looking for whether
-*invoicing* is a component with a boundary, not whether invoices
-exist as a table.
+Leadership funds "extract billing" because a driver is real. Engineering starts at the HTTP boundary and finds that every billing call touches `WorkOrder`, `UserContext`, and a static `AppState`. Spend the week on the graph. Language analyzers, ArchUnit, `jdeps`, import graphs, or a spreadsheet of package edges beat intuition. The field-ops target is a component boundary around invoicing. An invoice table existing is a different fact.
 
-**Failure mode** — Decomposability as a vibe ("it's pretty clean").
-Six weeks later the new service still compiles against the monolith
-as a library. That is not a split. That is a distributed build.
+"It's pretty clean," with no graph, is a vibe. Six weeks later the new service still compiles against the monolith as a library. That is a distributed build.
 
-### Afferent and efferent coupling
+## Afferent and efferent coupling
 
-Two directed counts, at **component** grain (the grain you actually
-might extract), not at class grain unless a class *is* the component
-— it almost never should be.
+Count at component grain, the grain you might extract. Class grain is the wrong count unless one class actually is the component, which it almost never is.
 
-- **Afferent coupling (Ca)** — how many *other* components depend on
-  this one. Incoming arrows. High Ca means you are *stable in
-  practice*: changing you breaks a crowd. "Stable" here means
-  *hard to change*, not "runs well."
-- **Efferent coupling (Ce)** — how many components *this* one depends
-  on. Outgoing arrows. High Ce means you are *unstable in practice*:
-  you change when anyone you depend on changes.
+- **Afferent coupling (Ca)** is how many other components depend on this one. Incoming arrows. High Ca means stable in practice: changing it breaks a crowd. Stable here means hard to change. It does not mean the component runs well.
+- **Efferent coupling (Ce)** is how many components this one depends on. Outgoing arrows. High Ce means unstable in practice: it changes when anything it depends on changes.
 
 ```
-   [intake] --Ce--> [assignment] <--Ca-- [dispatch]
-                       ^
-                       | Ca
-                    [notifications]
+  [intake] --Ce--> [assignment] <--Ca-- [dispatch]
+                      ^
+                      | Ca
+                   [notifications]
 ```
 
-A dispatch component with high Ce (talks to everyone) is a spider.
-An identity or `common-domain` component with high Ca is a boulder.
-Spiders and boulders both resist clean extraction; they fail in
-different ways.
+A dispatch component with high Ce, talking to everyone, is a spider. An identity or `common-domain` component with high Ca is a boulder. Spiders and boulders both resist a clean extraction, and they fail in different ways.
 
-**Problem** — You try to extract a boulder (`CustomerHelper`, `BaseEntity`,
-`SharedKernel`) as a service because "everyone uses it, it must be a
-platform." You have just turned the most statically coupled clump into
-a network dependency for every quantum.
+Extracting a boulder — `CustomerHelper`, `BaseEntity`, `SharedKernel` — as a service, because everyone uses it and it "must be a platform," turns the most statically coupled clump into a network dependency for every quantum.
 
-**Solution** — Use Ca/Ce as *warnings*, not as a popularity contest.
-High Ca: stabilize *from above* with abstractions, or split the boulder
-by change-reason before anyone extracts it. High Ce: the component
-does too much or lives at the wrong layer of the graph; flatten and
-re-cut ([ch. 5](../5-component-patterns/)).
+Use Ca and Ce as warnings. High Ca: stabilize it from above with an abstraction, or split the boulder by change-reason before anyone extracts it. High Ce: the component does too much, or it sits at the wrong layer of the graph. Flatten it and cut again.
 
-**Failure mode** — Optimizing the numbers in isolation. Driving Ce to
-zero inside a quantum destroys the cohesion [ch. 2](../2-coupling/)
-wanted. Driving Ca to zero on a real domain concept ("Customer")
-usually means you duplicated it everywhere. The metric is a lens for
-*cuts*, not a KPI for a dashboard that HR will gamify.
+Optimizing the numbers alone is a different failure. Driving Ce to zero inside a quantum removes the cohesion that quantum needed. Driving Ca to zero on a real domain concept such as `Customer` usually means the concept was copied everywhere. The metric is a lens for cuts. It is not a KPI for a dashboard that HR will gamify.
 
-Cycles are a special case: Ca and Ce become mutual. A cycle between
-hoped-for billing and dispatch means **the cut you wanted is not in
-the code**. Break the cycle (callback, event, duplicate a read model,
-invert a dependency) before you extract. Extracting a cycle gives you
-a distributed deadlock of deploys.
+Cycles are the special case: Ca and Ce become mutual. A cycle between hoped-for billing and hoped-for dispatch means the cut is not in the code. Break it before extraction: a callback, an event, a duplicated read model, or an inverted dependency. Extracting the cycle produces a distributed deadlock of deploys. Neither side can ship, because each is waiting on the other.
 
-### Abstractness and instability
+## Abstractness, instability, and the main sequence
 
-Two ratios sit on top of those counts. They are old object-oriented
-metrics; they still work if you read them at component grain and do
-not worship the formula.
+Two ratios sit on those counts. They are old object-oriented measures. They still work at component grain if the formula is not treated as the goal.
 
-- **Instability (I) = Ce / (Ca + Ce)**
-  - **I near 0:** little outgoing, lots of incoming. Stable. Should be
-    *hard* to change, so it had better be a stable *abstraction* (a
-    contract, an interface, a small published type), not a 4,000-line
-    concrete `Utils`.
-  - **I near 1:** lots of outgoing, little incoming. Unstable. Fine for
-    a concrete workflow at the edge (a dispatch worker that calls
-    many things and almost nobody calls it).
-- **Abstractness (A)** — fraction of the component that is
-  abstract (interfaces, abstract types, stable contracts) versus
-  concrete implementation. **A near 1:** mostly contracts. **A near 0:**
-  mostly code that does the work.
+**Instability** is `I = Ce / (Ca + Ce)`.
 
-You do not need a perfect static analyzer of "abstract." A practical
-stand-in: published APIs and types vs everything else. The point is
-the *relationship* between A and I, not three decimal places.
+- I near 0: little outgoing, lots of incoming. Stable. It should be hard to change, so it needs to be a stable abstraction — a contract, an interface, a small published type — rather than a 4,000-line concrete `Utils`.
+- I near 1: lots of outgoing, little incoming. Unstable. That fits a concrete workflow at the edge, such as a dispatch worker that calls many things and that almost nobody calls.
 
-**Problem** — A concrete `Common` package with I ≈ 0 (everyone depends
-on it, it depends on almost nothing). Every extraction has to take
-`Common` along, or call it over the network, or rewrite it. That is
-the **zone of pain**.
+**Abstractness (A)** is the fraction of the component that is abstract (interfaces, abstract types, stable contracts) versus concrete implementation. A near 1 is mostly contracts. A near 0 is mostly code that does the work. A practical stand-in, when a perfect analyzer of "abstract" is unavailable, is published APIs and types versus everything else. The relationship between A and I matters. Three decimal places do not.
 
-**Solution** — Either *abstract* the boulder (depend on a small
-contract; hide the concrete mess behind it and stop adding random
-helpers) or *break* it by domain so Ca falls. Pain is not "has
-concrete code." Pain is **concrete + widely depended-on**.
+A concrete `Common` package with I near 0 — everyone depends on it, it depends on almost nothing — forces every extraction to take `Common` along, call it over the network, or rewrite it. That corner is the **zone of pain**. Pain is concrete *and* widely depended on. Concrete code by itself is ordinary.
 
-The other ditch is the **zone of uselessness**: highly abstract *and*
-highly unstable (I ≈ 1, A ≈ 1). A forest of interfaces that depend on
-everything and that nobody treats as a stable contract. You cannot
-extract it because there is nothing to extract — only ceremony.
-
-**Failure mode** — Rewriting the system to pretty-up A and I without
-a cut in mind. Metrics exist to find the *next* seam, not to win a
-score. Also: applying class-level Chidamber & Kemerer numbers to a
-polyglot monolith and declaring the Java side "indecomposable" while
-the real boulder is a shared Postgres enum.
-
-### Distance from the main sequence
-
-The **main sequence** is the diagonal where **A + I ≈ 1**:
-
-- Abstract and stable (contracts, published events, a tiny identity
-  protocol).
-- Concrete and unstable (edge workflows, jobs, UI adapters).
-
-**Distance from the main sequence (D)** is how far a component sits
-from that diagonal, commonly `|A + I − 1|`. D near 0 is "this
-component is a kind of thing we know how to move." D near 1 is "this
-component is either painful or useless."
+The other ditch is the **zone of uselessness**: highly abstract and highly unstable (I near 1 and A near 1). A forest of interfaces that depend on everything, and that nobody treats as a stable contract. There is nothing to extract. There is ceremony.
 
 ```
-  want:
-    [TicketClosed contract]     A high, I low   (stable abstraction)
-    [dispatch worker]           A low,  I high  (concrete edge)
-
-  trouble:
-    [SharedKernel concrete]     A low,  I low   (pain)
-    [AbstractServiceBase*]      A high, I high  (useless)
+  abstract
+     ^   zone of uselessness
+     |   (abstract and unstable)
+     |
+     |        *  main sequence
+     |        *  A + I ≈ 1
+     |
+     |   zone of pain
+     |   (concrete and stable)
+     v
+  concrete              stable (high Ca) -->
 ```
 
-Use D as a **triage list**, not as a grade. Sort components by D,
-then by Ca. The top of that list is where decomposition will lie to
-you: you will think you extracted "billing" and you actually extracted
-nothing because billing *is* the kernel.
+The **main sequence** is the diagonal where `A + I ≈ 1`.
 
-**Problem** — The only candidate for a first service is also the
-component with the worst D and the highest Ca.
+- Abstract and stable: contracts, published events, a tiny identity protocol.
+- Concrete and unstable: edge workflows, jobs, UI adapters.
 
-**Solution** — Do not start there. Either repair it (split the kernel,
-introduce a contract, break a cycle) until D drops, or choose
-**tactical forking** so you are not blocked on a year of purification.
-Starting with a leaf (high I, low Ca) is how component-based
-decomposition stays honest.
+**Distance from the main sequence (D)** is how far a component sits from that diagonal, commonly `|A + I − 1|`. D near 0 means this is a kind of component that can be moved. D near 1 means it is painful or useless.
 
-**Failure mode** — "Main sequence" as architecture astrology. If you
-cannot name the component, the incoming arrow, and the production
-failure you fear, put the plot away and draw the import graph.
+```
+  on the diagonal:
+    [TicketClosed contract]    A high, I low    stable abstraction
+    [dispatch worker]          A low,  I high   concrete edge
 
-For the book's ticketing/field-ops case: if `WorkOrder` is a concrete
-god table/type with Ca from intake, assignment, invoicing, and parts,
-you are looking at pain. You do not "extract WorkOrder as a service."
-You decide which workflow *owns* which slice, or you fork and delete
-until ownership is forced. That decision is this chapter plus
-[ch. 9](../9-data-ownership/).
+  off it:
+    [SharedKernel concrete]    A low,  I low    pain
+    [AbstractServiceBase*]     A high, I high   useless
+```
 
-## Component-based decomposition vs tactical forking
+Use D as a triage list. Sort components by D, then by Ca. The top of that list is where a decomposition lies: the extract is named "billing," and billing *is* the kernel, so nothing separable moved.
 
-Once the graph is visible, you still pick a **method** for getting
-code into a new deployable. These two are not ideologies. They are
-trade-offs with different failure modes.
+The only candidate for a first service is also the component with the worst D and the highest Ca. Do not start there. Repair it until D drops — split the kernel, introduce a contract, break a cycle — or choose tactical forking so the work is not blocked on a year of purification. Component-based decomposition stays honest when it starts at a **leaf**: high I, low Ca.
 
-### Component-based decomposition
+If you cannot name the component, the incoming arrow, and the production failure you are afraid of, the plot is not helping. Draw the import graph.
 
-You identify components, clean their dependencies, group them into
-domains, and *then* extract a domain into a new quantum. [Chapter
-5](../5-component-patterns/) is the pattern sequence. This chapter
-only places the bet.
+On the field-ops model, `WorkOrder` as a concrete god table or god type, with afferent coupling from intake, assignment, invoicing, and parts, sits in the zone of pain. Extracting `WorkOrder` as a service drags every workflow. Decide which workflow owns which slice, or fork and delete until ownership is forced.
 
-You gain:
+Rewriting the system to improve A and I, with no cut in mind, chases a score. Class-level Chidamber and Kemerer numbers on a polyglot monolith can declare the Java side indecomposable while the real boulder is a shared Postgres enum.
 
-- The end state matches the domain you meant to isolate.
-- You learn the cycles *before* they become HTTP cycles.
-- Fitness functions (no new cross-domain imports, D staying in range
-  for the new boundary) can ride along.
+## Component-based decomposition
 
-You pay:
+Identify components, clean their dependencies, group them into domains, and then extract a domain into a new quantum.
 
-- Time. Analyzable structure is a prerequisite; a mudpile will not
-  yield it in a sprint.
-- Temptation to polish forever ("just one more cycle") while the
-  driver from [ch. 3](../3-modularity/) keeps charging.
+You gain three things. The end state matches the domain you meant to isolate. You see the cycles before they become HTTP cycles. Fitness functions can ride along: no new cross-domain imports, and D staying in range for the new boundary.
 
-**Problem** — The code already has names that look like components,
-but they are layers, and the real graph is a clique.
+You pay in time. A mudpile will not become analyzable structure inside one sprint. You also pay in the temptation to polish forever — one more cycle — while the driver keeps charging.
 
-**Solution** — Believe the arrows, not the folders. If the pattern
-sequence in chapter 5 cannot even *identify* components, you do not
-have a component-based path yet.
+Folder names can look like components when they are layers, and the real graph is a clique. Believe the arrows. If components cannot even be identified, there is no component-based path yet.
 
-**Failure mode** — Analysis paralysis dressed as architecture. Or a
-"component extraction" that still shares the kernel as a library, so
-static coupling never moved.
+The failure is analysis that never cuts, or a "component extraction" that still shares the kernel as a library, so the static coupling never moved.
 
-### Tactical forking
+## Tactical forking
 
-You **copy** the codebase (or a large slice) into a second deployable,
-then **delete** what that second deployable should not own, until
-something runnable remains. The first deployable may delete in the
-other direction, later.
+**Tactical forking** copies the codebase, or a large slice of it, into a second deployable, then deletes what that second deployable should not own, until something runnable remains. The first deployable can delete in the other direction later.
 
-You gain:
+You gain speed when a driver is already on fire and a team cannot ship because they are glued to a release train. You gain a path through code that cannot be analyzed cheaply: generated mess, missing tests, a clique of static coupling. You have a second artifact on day one, ugly as it is.
 
-- Speed when the driver is on fire (a team cannot ship because they
-  are glued to a release train).
-- A path through code that *cannot* be analyzed cheaply: generated
-  mess, missing tests, a clique of static coupling.
-- An honest second artifact on day one, even if it is ugly.
+You pay in duplication. Bugs get fixed twice, or they get fixed in one copy only. You pay in drift. The fork is a second mudpile unless someone is paid to delete aggressively and to stop merging "just in case." Shared data is untouched by a fork. Two copies of the code on one schema are still one quantum. A fork with no data plan is a process fork.
 
-You pay:
+Invoicing has to be out before fiscal year-end. The import graph is a hairball. Component-based work would start paying off in Q3, which is too late. Fork, delete until invoicing boots, freeze copy-paste back into the origin, and schedule the deletions as the project. The ADR says the move is tactical, states the expiry, and states how you will know merging from origin can stop.
 
-- Duplication. Bugs get fixed twice or not at all.
-- Drift. The fork is a second mudpile unless someone is paid to
-  *delete aggressively* and to stop merging "just in case."
-- Shared data is *not* solved by a fork. Two copies of the code on
-  one schema is still [one quantum](../2-coupling/). Forking without
-  a data plan is a process fork, not an architecture split.
+A temporary fork that becomes a product line — two years, two tax engines, nobody owning the diff — is the debt unpaid. Forking and still compiling against the origin is neither method. Forking is a legitimate move, and it is a debt. Name who pays the ongoing cost of two copies, or do not fork.
 
-**Problem** — You needed invoicing out before fiscal year-end. The
-import graph is a hairball. Component-based work would start paying
-off in Q3.
-
-**Solution** — Fork, delete until invoicing boots, put a freeze on
-copy-paste back into the origin, and schedule the deletions as the
-actual project. Record an ADR: this is tactical, this is the expiry
-date, this is how we will know we can stop merging from origin.
-
-**Failure mode** — "Temporary" forks that become product lines. Two
-years, two tax engines, no owner for the diff. Or forking *and*
-continuing to compile against the origin, which is neither method.
-
-Tactical forking is a legitimate architecture move. It is not a
-confession. It *is* a debt instrument. If you cannot name who pays
-the interest, do not sign.
-
-### Trade-offs, side by side
+## Which method
 
 | | Component-based | Tactical forking |
 |---|---|---|
 | Needs a readable graph | Yes | No (you will still want one later) |
-| Time to first extra deployable | Slow | Fast |
-| End-state cleanliness | Higher if you finish | Only if delete/merge is staffed |
+| Time to a first extra deployable | Slow | Fast |
+| End-state cleanliness | Higher if you finish | Only if delete and merge are staffed |
 | Risk | Polishing, never cutting | Duplicating, never deleting |
 | Data split | Still a separate project | Still a separate project |
-| Fits | Visible components, cycles you can break | Mudpile, deadline, "get a team unblocked" |
+| Fits | Visible components, cycles you can break | Mudpile, a deadline, a team to unblock |
 
-Neither approach is "how we do microservices." Both can stop at a
-**modular monolith** if [ch. 3](../3-modularity/) only needed
-maintainability and testability. Extra quanta are a later choice.
+Neither method is "how we do microservices." Both can stop at a modular monolith when the drivers in play are maintainability and testability. Another quantum is a further choice.
 
-## Choosing a decomposition approach
+Use component-based decomposition when:
 
-Choose with evidence from this chapter, not with team identity
-("we are a platform org, we don't fork").
-
-Use **component-based** when:
-
-- You can list components and most arrows without lying.
+- You can list components and most arrows without inventing them.
 - Cycles are few and breakable.
-- The first extractable leaf is obvious (high I, low Ca, sits on the
-  main sequence as a concrete edge).
-- The driver can wait for a few iterations of chapter 5.
+- The first leaf is obvious: high I, low Ca, a concrete edge on the main sequence.
+- The driver can wait through several iterations of cleaning that graph.
 
-Use **tactical forking** when:
+Use tactical forking when:
 
-- The graph is a clique or the boulder *is* the system.
-- A driver is already an incident factory and a leaf extraction is
-  not available.
-- A team must get off the train *now*, and you can staff deletion.
+- The graph is a clique, or the boulder is the system.
+- A driver is already producing incidents, and no leaf is available to extract.
+- A team has to leave the release train now, and deletion is staffed.
 
-Use a **hybrid** more often than either camp admits: fork to get a
-deployable, then run component patterns *inside* the fork so the
-second mudpile does not freeze. Or: component-based until you hit the
-kernel, then a narrow fork of that kernel with an expiry ADR.
+A hybrid is common. Fork to get a deployable, then identify and clean components inside the fork so the second mudpile does not freeze. Or go component-based until you hit the kernel, then fork that kernel narrowly, with an expiry in the ADR.
 
-**Problem** — Two senior engineers pick methods as aesthetics.
-Component-based vs fork becomes a culture war. The schema stays
-shared either way.
+Two engineers can treat the methods as taste and turn the choice into a feud. The schema stays shared either way. Put the choice in an ADR: the graph evidence, the driver, the method, the expiry, and the fitness function. Checks that match a fork: no new references from origin into the fork; the fork's Ca onto `SharedKernel` only decreases; billing tests run on the fork without the monolith classpath.
 
-**Solution** — Put the choice in an ADR ([ch. 1](../1-no-best-practices/)):
-graph evidence, driver, method, expiry, fitness function. Examples of
-checks: "no new references from origin into fork," "fork's Ca to
-`SharedKernel` only decreases," "billing tests run on the fork without
-the monolith classpath."
+Choosing a method without choosing a first cut is ceremony. Choosing before you know whether the destination is modules or quanta hides the same gap. If the database stays shared, say so. The approach then covers code deployability only.
 
-**Failure mode** — Choosing an approach without choosing a *first
-cut*. Method-without-seam is ceremony. Also: choosing before you know
-whether you are decomposing toward modules or toward quanta. If you
-still share the database, say so; the approach then is about *code*
-deployability only.
+On the field-ops code, invoicing as a leaf with a visible package graph can take the component-based path. Invoicing as annotations scattered through `WorkOrderService` starts honestly as fork-and-delete. Either way, `work_orders` as a shared table is still one quantum. The new repository is not the split until the data plan says who owns the rows.
 
-For the book's ticketing/field-ops case: if invoicing is a leaf with
-a visible package graph, component-based is available. If "invoicing"
-is annotations scattered through `WorkOrderService`, fork-and-delete
-is the honest start. Either way, `work_orders` as a shared table
-remains the quantum problem. Do not congratulate the new repo until
-[ch. 6](../6-operational-data/) has a sentence.
+## What goes wrong
 
-## Check yourself
+Declaring the code decomposable from the folder names, then discovering `WorkOrder`, `UserContext`, and `AppState` on every billing path, produces a service that still compiles as a library against the monolith.
 
-1. On a codebase you know, is it decomposable *this quarter*? Which of
-   the four questions (grain, arrows, pain sinks, fork vs analyze)
-   failed, and what would a premature extract look like in production?
-2. Pick one component. Roughly: is Ca or Ce winning? What extraction
-   mistake does that number warn you about?
-3. Explain the zone of pain without the word "metric": a concrete
-   thing everyone imports. Give a real `Utils` / `BaseEntity` /
-   `SharedKernel` story and what happened when someone "extracted"
-   it.
-4. Zone of uselessness: what does an abstract-and-unstable component
-   look like in a PR review, and why can you not extract it?
-5. Why start with a leaf (high I, low Ca) rather than with the most
-   "important" domain noun? What failure mode hits if you start with
-   `Customer` or `WorkOrder`?
-6. Component-based vs tactical forking: pick a system you have seen
-   split (or fail to). Which method did they *actually* use, and which
-   cost on the comparison table showed up?
-7. A fork still uses the origin's database. How many quanta do you
-   have, and which chapter's vocabulary answers that? Why is the fork
-   still possibly worth it?
-8. What fitness function would you attach to a tactical fork so it
-   cannot become a permanent duplicate tax engine?
-9. Distance from the main sequence: sort three real packages you know
-   into "probably movable," "pain," and "useless." What evidence did
-   you use besides a formula?
-10. You must choose an approach on Friday for the book's
-    ticketing/field-ops case (label only). What *one* measurement
-    would you take this week to decide fork vs component-based, and
-    what would "we chose on aesthetics" have cost?
+Extracting the boulder (`CustomerHelper`, `BaseEntity`, `SharedKernel`, a concrete `Common`, a god `WorkOrder`) creates a network dependency for every quantum, or it drags the universe into the new deployable. Extracting a cycle creates a deadlock of releases. Extracting the zone of uselessness — abstract bases nobody treats as a contract — extracts ceremony.
 
-Continue to [Component-based decomposition patterns](../5-component-patterns/).
+Starting at the most important noun, `Customer` or `WorkOrder`, starts at high Ca and bad D. The leaf (high I, low Ca) is the component-based first cut. Repair or fork when the only candidate is the kernel.
+
+Component-based work fails by polishing until the driver has been charging the whole time, or by extracting a component that still links the kernel. Tactical forking fails when the fork is never deleted: two tax engines, bugs fixed twice or once, and a standing merge "just in case." A fork that keeps the origin database has not added a quantum. It can still be worth doing when a team has to leave the train, as long as the data plan and the deletion are named.
+
+A choice made as aesthetics, with no measurement of the graph, pays one of those two bills and leaves the schema shared.
+
+## Recap
+
+Name components and their arrows, including tables and cycles, before announcing an extraction. Treat high Ca plus concrete code as pain, and high A plus high I as useless. Sort by distance from `A + I ≈ 1`, then by Ca, and start at a leaf if you are cleaning toward a cut. Use component-based decomposition when the graph is readable and the driver can wait. Fork, delete, and set an expiry when the graph is a clique and a team is blocked now. Record the method, the first cut, and a check. A shared `work_orders` table keeps the result one quantum until ownership of the rows is decided.

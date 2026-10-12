@@ -1,177 +1,120 @@
-# 13. A philosophy of streaming systems
+# A philosophy of streaming systems
 
-Companion notes for **Chapter 13** of *Designing Data-Intensive Applications*
-(2nd ed.). The first edition folded this into “the future of data
-systems.” The second edition makes it its own argument: **you will not
-get one database that does everything well, so compose specialized
-tools with dataflow**, and still aim for correctness.
+These notes teach the philosophy of streaming systems from *Designing Data-Intensive Applications*, 2nd edition, by Martin Kleppmann and Chris Riccomini.
 
-## What this chapter is for
+## What this argument is
 
-By now you have OLTP stores, warehouses, search, caches, stream jobs,
-batch jobs. The naive integration is a web of dual writes. This chapter
-is the alternative architecture: **one (or few) systems of record,
-everything else derived**, asynchronously, replayably.
+You will not get one database that does everything well. Compose specialized tools with dataflow, and still aim for correctness. An earlier telling of this material folded the argument into a chapter about the future of data systems. It stands on its own: the architecture, not a prediction.
 
-It is also the answer to “we cannot 2PC across Elasticsearch, Redis,
-and Postgres” (ch. 8): **don’t.** Use identifiers, idempotency, and
-asynchronous constraint checks — and be honest about what can be stale.
+A product at scale already has several stores. An OLTP database takes the order. A warehouse answers analytical questions. Search serves the product index. A cache serves the hot rows. Stream jobs and batch jobs fill those derived stores. The naive way to connect them is a web of dual writes: each request writes every store itself. Those stores then drift into different truths. The alternative is one system of record, or a few, and **everything else derived**, asynchronously, in a way you can replay.
 
-## Data integration
+This is also the practical answer to a distributed transaction across Elasticsearch, Redis, and Postgres. **Two-phase commit** (2PC), including XA between different database products, tries to make several stores commit or abort together. Do not use it across those three. Use identifiers, idempotency, and constraint checks that can finish after the request, and be honest about what is allowed to be stale.
 
-Every product at scale is several stores. The integration problem is
-keeping them from drifting into different “truths.”
+## One record, many derived copies
 
-### Combining specialized tools by deriving data
+### Derive, do not dual-write
 
-**Derive, don’t dual-write.** The order service writes Postgres (system
-of record). CDC or explicit events feed:
+An order service writes Postgres. Postgres is the system of record. From that commit, change data capture or an explicit event feeds the other copies:
 
-- search index
-- warehouse / lake
-- cache
-- ML features
-- notification pipeline
+- the search index
+- the warehouse or the lake
+- the cache
+- machine-learning features
+- the notification pipeline
 
-Each derived system is a **function of the record**. If the function is
-wrong, you fix it and **recompute** (batch, ch. 11) or **replay** (log,
-ch. 12). That is why log-based brokers and lakes matter: they are the
-*inputs* you can run again.
+Each of those is a **function of the record**. Search is "orders, indexed for lookup." The cache is "the hot order rows." Features are "what the model needs to know about this customer." If the function is wrong, you fix the function and run it again. A bounded recompute walks the stored input from start to end. A replay walks the log from an offset. Log-based brokers and lakes matter because they **are** those inputs. Without a durable, ordered input, every consumer is its own snowflake sync job, and a bug has nothing to rerun.
 
-Unbundling only works if the inputs are durable and ordered enough to
-rebuild. Without that, every consumer is a snowflake sync job.
+Writing Postgres and Elasticsearch in the same request is not this architecture. It is a dual write wearing an extra product logo. The request can commit the order and fail the index update. Search then permanently misses an order that the database has. Unbundling only works when the input is durable and ordered enough to rebuild. The log or the lake is that input. A second write inside the request is not.
 
-### Batch and stream processing together
+### The same function, live and overnight
 
-Stream for freshness; batch for correction, backfill, and heavy
-recompute. The hard part is making them **the same logical function**
-so the nightly job does not disagree with the stream (**lambda
-architecture**’s curse: two codepaths, two bugs).
+Use the stream for freshness. Use the batch job for correction, for backfill, and for a heavy recompute that should not run on the live path. The hard part is making them **the same logical function**. If the nightly job and the stream job implement the rule differently, they disagree, and the disagreement looks like data.
 
-Common compromises:
+That is the curse of a **lambda architecture**: two codepaths, two bugs. You fix the stream, forget the batch, and tomorrow's rebuild undoes the fix. Or the reverse.
 
-- **Kappa-ish:** the log is rich enough that “batch” is just replay with
-  more parallelism; one codepath.
-- Stream is the live path; batch periodically rebuilds from the lake to
-  **heal drift**, then you investigate why drift happened.
-- Shared libraries / SQL definitions so stream and batch compile the
-  same transform.
+Three compromises show up in practice.
 
-## Unbundling databases
+**Kappa-style.** The log is rich enough that "batch" is a replay of that same log with more parallelism. One codepath. The overnight job is the live job, started from an earlier offset and run harder.
 
-A traditional RDBMS already contains: a log, a query engine, secondary
-indexes, materialized views, replication. **Unbundling** means using
-separate products for those jobs — Kafka as the log, Elastic as an
-index, Redis as a cached view, Flink as the view maintainer —
-**composed around dataflow**.
+**Heal from the lake.** The stream is the live path. A batch job periodically rebuilds the derived store from the lake. Where they differ, the rebuild wins, and you then investigate why they drifted. You still have two paths, but the batch path is the correction, not a second invention of the rule.
 
-### Composing data storage technologies
+**One definition, two runtimes.** A shared library, or one SQL statement, compiles into both the stream job and the batch job. The rule lives in one place. The engines differ.
 
-You are not throwing away databases. You are composing storage
-technologies the way a database composes internal modules, with the
-network in between. The cost is you now own consistency across them
-(ch. 9). The gain is each piece can scale and evolve (ch. 5) on its
-own schedule.
+## A database, taken apart and wired back together
 
-Rule of thumb: **writes enter at the system of record**; everything
-else is a derived cache until proven otherwise.
+A traditional relational database already contains a log, a query engine, secondary indexes, materialized views, and replication. Those are modules inside one process. **Unbundling** uses a separate product for each job and composes them with dataflow. Kafka holds the log. Elasticsearch holds an index. Redis holds a cached view. Flink maintains the view. The network sits between the modules that used to share an address space.
 
-### Designing applications around dataflow
+You are not throwing the database away. You are composing storage technologies the way a database composes its own modules. The cost is that consistency across them is now yours. The database used to own it inside one transaction. The gain is that each piece can scale, and can change, on its own schedule. You can rebuild the index without resizing the OLTP box. You can replace the cache without rewriting the log.
 
-A write is an event (or becomes one via CDC). APIs, UIs, and derived
-stores are subscribers. Services stop “calling each other to update
-state” in a mesh of RPCs and start **emitting facts** others apply.
+The rule of thumb: **writes enter at the system of record**. Everything else is a derived cache until you have a reason to promote it.
 
-You can push **derived state** all the way to a client (reactive UI,
-local-first from ch. 6) so the phone updates when the view updates —
-and still works offline if you designed for sync engines.
+Kafka as the log plus Elasticsearch as the index is close to what a relational engine already is internally: an append-only history, and a secondary structure maintained from that history. That is a different claim from "we replaced the database with microservices." A mesh of services that call each other to poke at state has no single log to replay. An unbundled database still has one.
 
-### Observing derived state
+### Applications that emit facts
 
-How does a client learn the view changed?
+A write is an event, or it becomes one through change data capture. APIs, user interfaces, and derived stores are subscribers. They apply the fact. They do not form a mesh of remote calls in which each service tells the next one to update its private copy.
 
-- Polling (simple, wasteful).
-- Query-then-subscribe / watches (coordination services do this for
-  cluster metadata; products do it with websockets, SSE, push).
-- Push notifications when the materialized view updates.
+Derived state can be pushed all the way to the client. A **reactive UI** updates when the view updates. **Local-first** software, built on a sync engine, goes further: the phone keeps its own copy, applies updates when they arrive, and still works offline because the sync was designed for that.
 
-The coordination-service watch is the ancestor; the product feature is
-the same idea with user credentials and fan-out (ch. 2).
+### How a client learns that the view changed
 
-## Aiming for correctness
+Three mechanisms, from simplest to most direct.
 
-### The end-to-end argument for databases
+**Polling.** The client asks on a timer. It is simple, and it is wasteful: most polls return "nothing changed," and a change waits until the next poll.
 
-Do not trust every hop to be perfect. Put **idempotency keys** on the
-business operation so retries (ch. 9 timeouts) and double-clicks cannot
-double-charge. The database’s atomicity is not enough if the user
-generated two different request ids for one intent — or one id applied
-twice across a replay.
+**Query, then subscribe.** The client reads the current value, then watches for updates. Coordination services do this for cluster metadata: a member reads the current assignment and registers a watch so the next change is pushed. A product does the same thing with a websocket, with server-sent events, or with a push channel. The watch is the ancestor. The product version adds user credentials and **fan-out**: one view update becomes many pushes, one per connected client.
 
-End-to-end means: the *business* invariant is enforced where the
-business knows enough, not only inside one storage engine’s
-transaction.
+**Push when the view updates.** The job that maintains the materialized view notifies subscribers as part of applying the event. The client does not ask. The notification is the change.
 
-### Enforcing constraints
+## Correctness you can still claim
 
-Uniqueness and “sufficient balance” can be checked **asynchronously**
-by a consumer that may **reject after the fact**. Product patterns:
+### The business invariant, not only the disk
 
-- Wait for the check (higher latency, fewer apologies).
-- **Optimistic accept + apologize** (email “we had to undo”; airlines
-  overbook). Scalable; needs a clear user story and compensating
-  transactions.
+Do not trust every hop to be perfect. A timeout retries the request. A double-click sends it twice. A replay sends it again. Put an **idempotency key** on the business operation so those duplicates cannot double-charge. The key lives on the write API: the client sends `Idempotency-Key: order-8841-attempt-1` with the charge, and the record stores that it already applied that key.
 
-This is often more operable than distributed locking across services
-or XA 2PC. It is not a license to corrupt money without a ledger —
-ledgers still need a sharp consistency story (ch. 8 / 10) for the
-record of truth.
+Atomicity inside one database is not enough, for two different failures. Two browser tabs can submit one human intent as two requests with **different** keys. The database dutifully applies both, because they do not look like duplicates. Or one key can be applied twice across a replay, if the handler does not record the key before it charges. End to end means the business invariant is enforced where the business knows enough — at the operation the user actually meant — not only inside one storage engine's transaction.
 
-### Timeliness and integrity
+### A constraint checked after the fact
 
-A derived view can be slightly **stale** (timeliness) as long as it is
-not *wrong forever* (integrity). Linearizability (ch. 10) is for the
-few facts that cannot be stale. Most of a social app is the other pile.
+Uniqueness, and "the account has sufficient balance," can be checked **asynchronously**. A consumer reads the event, applies the rule, and may **reject after the fact**.
 
-Say both numbers: “search may lag 5 s; it must not permanently miss a
-delete.”
+Two product patterns follow.
 
-### Trust, but verify
+**Wait for the check.** The user sees a spinner until the consumer confirms. Latency is higher. Apologies are rarer, because you do not show success before the constraint has passed.
 
-Checksums, audit consumers that compare derived stores to the record,
-lineage (which job produced this partition), row counts, and canaries.
-Derived systems drift — bugs, dropped messages, schema mismatches
-(ch. 5). Budget for **detecting** drift, not only for building pipes.
+**Optimistic accept, then apologize.** You take the booking, and sometimes you send "we had to undo this." Airlines overbook seats on this pattern. It scales, because the request path does not wait for every downstream check. It needs a clear story for the user, and a **compensating transaction**: a later action that undoes the earlier one, such as a refund or a released hold.
 
-## How this shows up when you design something
+This is often more operable than a distributed lock across services, or XA two-phase commit across them. It is not permission to corrupt money and sort it out later. A ledger still needs a sharp consistency story for the record of truth. The balance that is the books is not a cache you apologize for.
 
-A strong end-to-end design states:
+A wallet balance is the sharp case. It must not stay wrong. "People also bought" is the other pile. A stale recommendation is a timeliness problem. A balance that permanently disagrees with the ledger is an integrity problem.
 
-1. The **system of record**.
-2. **Derived** stores and how they are fed (CDC vs explicit events).
-3. The **idempotency key** on the write API.
-4. What is allowed to be **stale**, and by how long.
-5. How you **rebuild** a derived store after a bug.
-6. Which constraints are **sync** vs **async**, and how users see
-   rejection.
+### Stale for a while, wrong forever is a different bug
 
-That list beats a dozen product logos in an interview.
+A derived view may be slightly **stale**. That is timeliness. It must not be **wrong forever**. That is integrity. **Linearizability** is the strong recency guarantee: the system behaves as if there were one copy, and once a write has completed, any read that starts later sees that write or something newer. Reserve it for the few facts that cannot be stale. A username that must be unique. A lock. The ledger line. Most of a social application is the other pile. The feed can lag.
 
-## Check yourself
+Say both numbers. "Search may lag by 5 seconds" is the timeliness budget. "Search must not permanently miss a delete" is the integrity rule. A delete that arrives late and then sticks is acceptable. A delete that the index drops on the floor, so the document comes back in every future rebuild, is not.
 
-1. Why is “write Postgres, write Elastic in the same request” not
-   unbundling, and what goes wrong?
-2. Give a constraint you would check asynchronously, and how the user
-   sees a failure.
-3. Timeliness vs integrity for a wallet balance vs a “people also
-   bought” widget.
-4. How does replay give you evolvability (ch. 2 / 5) that dual-write
-   does not?
-5. What is the lambda architecture’s main operational curse?
-6. Why is Kafka-as-log + Elastic-as-index closer to an RDBMS’s internals
-   than “we replaced the database with microservices”?
-7. End-to-end idempotency: where does the key live, and what happens if
-   two tabs submit twice with different keys?
-8. Name one audit you would run weekly to catch derived-store drift.
+### Assume drift, and go look for it
 
-Continue to [Doing the right thing](../14-doing-the-right-thing/).
+Derived systems drift. A bug in the function, a dropped message, a schema mismatch between producer and consumer. Budget for **detecting** that, not only for building the pipes.
+
+An audit consumer reads the system of record and the derived store and compares them. Checksums catch bit-level disagreement. Row counts catch a missing partition. **Lineage** records which job produced this partition, so a bad build can be named. A canary record, one you know the right answer for, runs through the same pipes and is checked on the other side. Run one of these on a schedule. A weekly comparison of the search index against the orders table will catch a dual-write hole that no request-path metric sees.
+
+## What a design states
+
+Walk one order through the design and write down six facts.
+
+1. **The system of record.** The order row commits in Postgres. That commit is what "the order exists" means.
+2. **The derived stores, and how they are fed.** Search, the warehouse, the cache, features, and notifications consume change data capture or an explicit event. They are not written by the request handler.
+3. **The idempotency key on the write API.** A retry of "place order 8841" hits the stored key and does not charge again. Two tabs that invent two keys are two intents, and the API will treat them as two.
+4. **What may be stale, and for how long.** Search may lag by 5 seconds. The charge may not.
+5. **How you rebuild after a bug.** Replay the log, or recompute from the lake, through the corrected function, into a new snapshot of the derived store.
+6. **Which constraints are synchronous, which are asynchronous, and what the user sees on rejection.** Sufficient balance might be checked after the accept, with a compensating refund. Uniqueness of the payment id is checked on the record, in the request.
+
+That list is the design. A page of product logos is not.
+
+Replay is also what makes the system **evolvable**. You can add a new index, or change the feature function, and build it by replaying history. A dual write cannot do that. The second write was not kept. There is no input to run the new function on, except whatever happens to still be in each store, already transformed the old way.
+
+## Recap
+
+Specialized stores stay honest when one system of record accepts the write and every other store is a function of that write, fed by a durable ordered log or by files you can recompute. A second write inside the request is how those stores diverge. Stream and batch must implement the same function, or the nightly job fights the live one; one codepath, a shared definition, or a batch rebuild that heals drift are the ways out. Unbundling is a database's own modules — log, index, cache, view maintainer — with the network between them, which means you now own consistency, idempotency keys, and the choice of which constraints wait and which apologize. Timeliness is allowed lag. Integrity is the promise that a delete, or a charge, is not lost forever. Drift is expected, and an audit that compares the derived store to the record is part of the system.

@@ -6,11 +6,6 @@ stays on **how data systems behave**: OLTP vs OLAP, encodings,
 replication, sharding, isolation, partial failure, consensus, batch and
 stream, and data about people.
 
-The other book in this workshop — *Software Architecture: The Hard
-Parts* — lives in [`../hard-parts/`](../hard-parts/). Shared words
-(transaction, consistency, schema, workflow, OLAP) are **not** merged
-here. Use [`../INDEX.md`](../INDEX.md) when you need the other angle.
-
 If you have notes from the **2017 first edition**, chapter numbers
 moved. This track follows the **2026 second edition**. The mapping is
 in the workshop [`README.md`](../README.md).

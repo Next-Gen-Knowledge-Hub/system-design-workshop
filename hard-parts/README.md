@@ -7,14 +7,6 @@ architectures*. This track stays on **how you pull a system apart and
 put communication, data, and workflow back together** — coupling,
 granularity, reuse, ownership, sagas, contracts, analytical mesh.
 
-The other book in this workshop — *Designing Data-Intensive
-Applications* (2e) — lives in [`../ddia/`](../ddia/)
-([`../ddia/1-architecture-tradeoffs/`](../ddia/1-architecture-tradeoffs/) through
-[`../ddia/14-doing-the-right-thing/`](../ddia/14-doing-the-right-thing/)). Shared
-words (transaction, consistency, encoding, OLTP/OLAP, workflow) are
-**not** merged here. Use [`../INDEX.md`](../INDEX.md) when you need the
-other angle.
-
 The book's running case is a **ticketing / field-ops company** ("Sysops
 Squad"). These notes keep the *decisions*, not the plot.
 

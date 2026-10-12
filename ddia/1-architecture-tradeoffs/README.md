@@ -1,171 +1,100 @@
 # 1. Trade-offs in data systems architecture
 
-Companion notes for **Chapter 1** of *Designing Data-Intensive Applications*
-(2nd ed.). The book’s opening move is not “here is the best database.” It is:
-almost every architecture question has several honest answers, and your job
-is to name the trade-off before you pick.
+These notes follow Chapter 1 of *Designing Data-Intensive Applications*, 2nd edition, by Kleppmann and Riccomini.
 
-Read the chapter, then use this walkthrough to keep the vocabulary straight.
+A data system stores facts and answers questions about them. Almost every architecture question has more than one honest answer, and each answer spends something different: disk layout, staff time, failure behavior, or a legal limit on what you may keep. This chapter is the four choices you name before you pick a product: who the query is for, who runs the machines, how many machines must talk, and what you are allowed to store.
 
-## What this chapter is for
+## Operational systems and analytical systems
 
-System design interviews and real designs both fail the same way: someone
-jumps to Kafka, or Kubernetes, or “we’ll shard Postgres,” without saying
-*what kind of system this is*. Chapter 1 gives you four forks that show up
-in almost every design:
+An **operational** system, also called OLTP (online transaction processing), is the database the product uses while a person is waiting. A user taps pay, a rider requests a trip, or a post is liked. The application looks up a small number of records by key, maybe updates those records, and has to answer in milliseconds. The same application both reads and writes. When a backend engineer says "the database," this is the system they usually mean.
 
-1. Operational vs analytical
-2. Cloud vs self-hosting
-3. Distributed vs single-node
-4. Business goals vs law and the people in the data
+An **analytical** system, also called OLAP (online analytical processing), serves people and jobs that look at data they did not just write: a business analyst, a data scientist, a model-training job. A typical query scans a huge number of rows and computes a count, a sum, or an average, such as revenue per city in January. The query almost never changes the source records. It reads a **derived** dataset, a copy that has been reshaped for that question.
 
-If you can place a problem on those four axes, the rest of the book (and
-the rest of this workshop) has somewhere to hang.
+The two workloads want different layouts on disk, and they fight when they share one. Checkout of one order is a point lookup: find one key, read that record, return. A scan of last month's orders reads a large stretch of disk and CPU to sum a column. The page layout that makes the point lookup a short seek is a poor layout for summing one column over a billion rows, because the scan wants to read that column straight through, and the lookup wants a short path to one whole row. While the scan holds the disk, the checkout waits.
 
-## Operational versus analytical systems
+So the operational store stays small and fast, and a copy is made for analysis. A **data warehouse** is a structured store whose tables are modeled for SQL aggregates. A **data lake** is a pile of cheaper, more flexible files on object storage: Parquet tables, Avro records, images, embeddings, and other files that do not share one schema. Three jobs fill the copy.
 
-Two audiences share one company’s data, and they want opposite things.
+- **ETL** (extract, transform, load) reads the operational data, reshapes it, and writes the result into the warehouse or the lake.
+- **ELT** loads the data first and runs the transform inside the destination.
+- **Reverse ETL** copies a modeled result back into an operational tool, such as a support screen that shows a score computed in the warehouse.
 
-**Operational systems (OLTP)** are the product. A user taps “pay,” a rider
-requests a trip, a post is liked. The typical query looks up a *small*
-number of records by key, maybe updates them, and must answer in
-milliseconds. The application both reads and writes. This is what most
-backend engineers mean by “the database.”
+**Data engineers** keep those pipes and the platforms under them working. **Analytics engineers** turn the copied tables into models an analyst can query without learning the operational schema. A design that never says how reporting or training will read the data is missing half the system.
 
-**Analytical systems (OLAP)** are for people who look at the data rather
-than generate it: business analysts, data scientists, ML training jobs.
-A typical query *scans* huge numbers of rows and computes counts, sums,
-averages (“revenue per city in January”). They almost never mutate the
-source records; they build *derived* datasets on top.
+### The system of record and the copies
 
-Keeping these on the same database is tempting and usually a bad idea.
-A warehouse scan that touches last month’s orders will fight with the
-checkout path for disk and CPU. The storage layout that is fast for
-point lookups (see [ch. 4](../4-storage-and-retrieval/)) is the wrong
-layout for “sum this column over a billion rows.” So organizations copy
-data out of OLTP into a **data warehouse** (structured, modeled for
-SQL analytics) or a **data lake** (cheaper, more flexible files on object
-storage — Parquet, Avro, images, embeddings, whatever). The copy is filled
-by **ETL** (extract–transform–load) or its modern cousins (ELT, reverse ETL).
+A **system of record** is the one place a fact is written as the authority. If two copies disagree, this one wins. The order table is a system of record. A derived dataset is a copy transformed for another reader: a search index, a cache, a warehouse table, a feature store that holds inputs for a model. A large product is usually one system of record plus several of those copies.
 
-Two roles sit on the bridge: **data engineers** keep the pipes and
-platforms honest; **analytics engineers** model the data so analysts can
-query it. You do not have to become either, but a system design that
-ignores “how does this data get used for reporting / ML” is incomplete.
-
-**Systems of record vs derived data** is the other half of this split.
-A *system of record* is the authoritative place a fact is written (the
-order table). A *derived* dataset is a copy transformed for another
-purpose (search index, cache, warehouse table, ML feature store). Most
-large products are a system of record plus several derived systems. That
-idea returns as the backbone of [ch. 11–13](../11-batch-processing/).
+Walk one order through that path. Checkout inserts a row: order 1842, user 17, city Tehran, amount 40. That insert is the system of record. Something then carries the change outward. The carrier might be a scheduled ETL job, an event the checkout service emits on purpose, or **CDC** (change data capture). CDC tails the database's own change log and republishes each insert, update, and delete, so a downstream copy can apply the same change without scraping tables. The warehouse receives a row it can sum. Search receives a document it can query by text. A cache receives the hot order so the next page does not hit the primary. Analysts, training jobs, and other services read those copies. They do not write the order row.
 
 ```
-Users ──► OLTP (system of record)
- │
- │ ETL / CDC / events
- ▼
- Warehouse / lake / search / cache (derived)
- │
- ▼
- Analysts, ML, other services
+Users --> OLTP system of record (order 1842 is written here)
+            |
+            | ETL, ELT, CDC, or an event
+            v
+          warehouse / lake / search / cache   (derived copies)
+            |
+            v
+          analysts, training jobs, other services
 ```
 
-## Cloud versus self-hosting
+The checkout path wrote one row and returned in milliseconds. The January-revenue question sums the warehouse copy. The search box reads the search copy.
 
-“Should we use the managed thing?” is a business question wearing a
-tech costume.
+What you lose if you skip the split: the revenue scan and the checkout compete for the same disk and CPU, and checkout latency moves with whatever an analyst happened to run. What you lose if you treat a copy as the authority: a stalled pipeline serves a stale order, and there is no row left that can settle the argument. What you lose if you never make the copy: "revenue per city" becomes a billion-row scan against the product database.
 
-The spectrum the book draws:
+## Who runs the software
 
-- You write it and run it (maximum control, maximum toil).
-- You run off-the-shelf software yourself — on your metal or on cloud VMs
- (IaaS). Self-hosting Postgres on a VM is still *you* operating Postgres.
-- You call a vendor API / SaaS and they operate the software.
+The next choice is who operates the system. It is a cost and staffing question that shows up wearing a product name. There are three stops on the spectrum.
 
-Cloud is not automatically cheaper. If load is **steady** and you already
-know how to run the system, owning machines is often cheaper. Cloud wins
-when load **spikes**, when you do not want to staff a specialty (Kafka
-on-call, warehouse ops), or when you need a capability next week rather
-than after a hiring cycle. You still need an operations team in the
-cloud — the work moves from “rack a box” to “IAM, cost, failure modes of
-someone else’s control plane.”
+You write the software and you run it. You can change any behavior. You also own every backup, every page, and every night call.
 
-**Cloud-native architecture** in this book mostly means: **disaggregate
-storage and compute**. Classic databases kept data on the same box that
-ran queries. Aurora-style and Snowflake-style systems put durable bytes
-on replicated object / block storage and let compute nodes come and go.
-That is why they can scale storage and query power independently, and
-why “the disk on this VM died” is a different failure than it used to be.
+You run off-the-shelf software yourself, on machines you own or on virtual machines you rent. Renting the machine is **IaaS** (infrastructure as a service): you get a computer, and the software on it is yours to operate. Postgres on a cloud virtual machine is still your Postgres. You patch it, you take the backups, and you explain a stuck query.
 
-Kubernetes is *how you place
-processes*. It does not replace the data-system trade-offs in this
-chapter.
+You call a vendor's API. That is **SaaS** (software as a service). The vendor runs the software. You send requests and pay the bill.
 
-## Distributed versus single-node
+A steady load, on a system the team already knows how to run, is often cheaper on machines you own. The cloud bill wins in three situations: the load spikes, and you want machines for the spike and not for the quiet month; you do not want to staff a specialty such as Kafka on-call or warehouse operations; or you need the capability next week rather than after a hiring cycle. An operations team still exists after you move. The work shifts from racking a box to identity and access rules (IAM), cost, and the ways someone else's control plane can fail while your data is fine.
 
-A **distributed system** is several machines talking over a network.
-Each participant is a **node**. You might distribute because:
+**Cloud-native**, as this chapter uses the term, means storage and compute are **disaggregated**: the durable bytes and the processes that query them live on different machines. A classic database kept the files on the same box that ran the queries. When that disk died, the queries died with it, unless a replica you understood had the bytes. Aurora-style and Snowflake-style systems put the durable bytes on replicated object storage or block storage, and they let compute nodes appear and disappear. Storage can grow without adding query CPUs. Query power can grow without copying the dataset onto each new node. A disk dying on one virtual machine is then a compute failure: another node can read the same stored bytes. That is a different failure from "the only copy lived on the disk that just died."
 
-- The problem is already distributed (two users on two phones).
-- Cloud services and microservices *are* a network (data lives in
- service A, processing in service B).
-- You want **fault tolerance** (one machine dying is not the product
- dying) or **geo latency** (data near the user).
-- One machine is not big enough.
+Kubernetes places processes onto machines and restarts them when they exit. The data choices stay yours: whether the path is operational or analytical, whether the bytes live with the query or apart from it, and what a half-reachable node means.
 
-The book’s warning, which this workshop will repeat: **do not distribute
-for sport**. One well-run server (or one primary with replicas you
-understand) is simpler, more deterministic, and easier to debug than a
-cluster. Partial failure — some nodes up, some down, network lying —
-is the tax you pay the moment you add a second machine. Chapter 9 exists
-because of this paragraph.
+What you lose: a steady workload on a usage-priced service can cost more than machines you already operate well. Owned machines sized for a spike sit idle the rest of the month, and owned machines sized for the average fall over at the spike. A managed control plane can refuse calls while the bytes are healthy, and you cannot rack a replacement for an API.
 
-**Microservices and serverless** push you into the distributed column
-even when the data would have fit on one box. Each service with its own
-database makes *cross-service* consistency *your* problem (see
-[ch. 8, distributed transactions](../8-transactions/)). Sometimes that
-is the right team boundary. Sometimes it is an accidental distributed
-monolith.
+## One machine and several machines
 
-## Data systems, law, and society
+A **distributed system** is several computers cooperating by messages over a network. Each computer in that set is a **node**.
 
-This is not a “soft” appendix. GDPR (and cousins like CCPA, plus AI
-regulation such as the EU AI Act) change what you are allowed to store,
-for how long, and for which purpose. The **right to erasure** collides
-with append-only logs and with ML models trained on personal data —
-two techniques this book otherwise loves.
+Distribute when you can name the reason.
 
-**Data minimization** (*Datensparsamkeit*): collect for a stated purpose,
-do not keep it “in case it is useful later.” That fights the “big data”
-instinct. Once you add the cost of a breach, a compelled handover, or a
-fine, some data is simply not worth storing.
+The problem is already on more than one computer. Two users on two phones are already two machines. Any system between them has to accept that a message takes time and sometimes does not arrive.
 
-PCI, SOC 2, and similar audits are how buyers force this into vendor
-selection. Chapter 14 picks the ethics thread back up; here the point is
-architectural: immutability, derived datasets, and “keep everything”
-are *design* choices with legal consequences.
+The design is already a network. A cloud service, and a split into microservices, is a network even when the rows would fit on one disk. Service A holds the data. Service B does the work. Every user action pays a round trip, and the call can fail while the other process is healthy.
 
-## How this shows up when you design something
+You want **fault tolerance**: one machine dying should leave the product up. Or you want the bytes near the user, so a read does not cross an ocean. The mechanism under both is **replication**: another node keeps a copy of the same writes, so a read or a failover has somewhere to go. A **primary** accepts the writes. A **replica** applies the same writes. If you have tested what the replica knows and how far behind it is, one primary plus replicas is still a much smaller story than a cluster of peers.
 
-Before you draw boxes, say out loud:
+Or one machine is not big enough. The data does not fit on its disk, or the query rate does not fit on its CPUs.
 
-- Is this path **OLTP** (user waiting) or **OLAP** (scan / train / report)?
-- Is the store a **system of record** or a **derived** view?
-- Are we paying for **elasticity**, or do we have steady load and ops skill?
-- Do we *need* more than one node, and for which of: size, fault
- tolerance, geo?
-- What personal data is in the request, and what is the deletion story?
+A single well-run server is simpler to debug than a cluster. Inside one process, a call returns or the process is dead. The moment a second machine is added, you pay **partial failure**. Some nodes are up, some are down, and the network can lie: a dropped packet looks, for a while, like a node that is slow. Waiting a fixed time cannot separate "slow" from "gone." A retry can apply the same write twice when the first attempt actually landed and only the response was lost.
 
-If you cannot answer those, you are not ready to choose Kafka vs Postgres.
+**Microservices** and **serverless** functions put the design in that distributed column even when the data would have fit on one box. Each service with its own database splits a fact that used to be one local write. **Cross-service consistency** is then yours to define: the payment write and the order write are two writes on two machines, and you need a story for the case where one landed and the other did not. A **distributed transaction** tries to make those writes commit or abort together. The coordinator and the network sit on the path of the write, and an unreachable coordinator is a new way for a simple purchase to stick. Sometimes the split matches a team boundary, because two teams need to ship without sharing one database. Sometimes it is a **distributed monolith**: no service can finish a user request alone, every request still needs all of them, and you have added partial failure without a team boundary that needed it.
 
-## Check yourself
+What you lose if you add a second node with no size, fault, or geography reason: partial failure, and no capacity you were short of. What you lose if two services write two databases with no consistency story: the payment exists and the order does not, or the reverse, and the user sees one of those.
 
-1. Give one example from a product you know of an OLTP query and an OLAP
- query on *related* data. Why should they not share one box?
-2. When is self-hosting the cheaper, more honest choice?
-3. Name two reasons to distribute that are *not* “the data does not fit.”
-4. Why is “append-only log” in tension with “user asked us to delete
- their data”?
+## What the law does to a stored fact
 
-Continue to [Defining nonfunctional requirements](../2-nonfunctional-requirements/).
+GDPR, similar laws such as the CCPA, and AI regulation such as the EU AI Act change what you may store, how long you may keep it, and which purpose you may use it for. The **right to erasure** says a person can require their personal data to be deleted. That requirement hits two designs that are otherwise useful.
+
+An **append-only log** writes new records at the end and does not edit old bytes in place. A `DELETE` of the operational row does not reach a person who is still sitting in an older log record. Removing them means rewriting the log, and it means finding every other copy. A model trained on personal data has the same shape: deleting the row leaves the person in the training set the model was built from. Erasure has to reach every copy, not only the row a `DELETE` can see.
+
+**Data minimization** (*Datensparsamkeit*) means you collect a field for a stated purpose, and you do not keep it because it might be useful later. That rule fights the habit of storing every event on the grounds that disk is cheap. Add the cost of a breach, a compelled handover, or a fine, and some columns cost more to hold than they are worth.
+
+PCI, SOC 2, and audits like them are how a buyer forces the same question into a vendor choice. The buyer asks where a card number lives, who can read it, and how long a backup keeps it. Immutability, derived datasets, and a policy of keeping everything are design choices with legal weight: every extra copy is another place a deletion has to arrive, and an append-only log is a copy that refuses an ordinary update.
+
+What you lose: a deletion that touches only the order table leaves the person in the warehouse, the search index, the feature store, and last quarter's backup. A model trained last month still answers from data the person withdrew. A log you cannot edit becomes the incident the first time erasure is enforced.
+
+## Recap
+
+An operational path looks up or updates a few records by key while a user waits, and it answers in milliseconds. An analytical path scans many rows and reduces them to a count, a sum, or an average. The scan belongs on a copy, because it wants a column laid out for a sequential read, and because it would take the disk and CPU the checkout path needs. The order row is the system of record. The warehouse, the lake, search, the cache, and the feature store are derived. ETL, ELT, reverse ETL, CDC, and emitted events are the ways the change gets from the row to the copy.
+
+Writing and running the software, or running Postgres yourself on a rented virtual machine, leaves operations with you. A vendor API moves the daily work onto identity rules, cost, and that vendor's control plane. Steady load you already know how to run is often cheaper on machines you own. Spikes, a missing specialty, and a need measured in days are where the cloud price buys time. Disaggregated storage and compute let the bytes and the query CPUs grow on separate schedules, and a dead disk on a compute node is no longer the loss of the only copy. Kubernetes places processes; it does not make those data choices.
+
+A second machine is justified when the users are already on separate devices, when the services are already a network, when one death must not be an outage, when the bytes must sit near the user, or when one machine cannot hold the data or the rate. Partial failure arrives with that second machine: some nodes up, some down, the network able to drop a reply. Two databases under two services make cross-service consistency, and any distributed transaction around it, part of the write. GDPR, the CCPA, and the EU AI Act make every append-only log, every derived copy, and every trained model part of the deletion path, and data minimization says some fields should never be written down.

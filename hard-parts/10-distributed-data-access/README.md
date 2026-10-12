@@ -1,35 +1,12 @@
 # 10. Distributed data access
 
-Companion notes for **Chapter 10** of *Software Architecture: The Hard
-Parts* (Ford, Richards, Sadalage, Dehghani, 2021). Chapter 9 decided
-**who writes**. This chapter decides **how someone else reads** once
-the SQL join is illegal. Every option is a least-bad replacement for
-a join you used to get for free. Pick the pain you can operate.
+These notes teach how another service reads data it does not own, from *Software Architecture: The Hard Parts* (Ford, Richards, Sadalage, Dehghani, 2021).
 
-Skip it and you will `HTTP GET` in a loop until latency and a
-neighbor’s outage become your SLO, *or* you will copy entire tables
-into every service “for speed” and spend a year on invalidation.
-Reads have an architecture. It is not `SELECT … JOIN`.
+## The join moved; it did not disappear
 
-## See also (do not merge)
+Ownership decides who writes. **Ownership** means one service is the system of record: it alone holds the write credentials for those rows. Once that is true, the SQL join is illegal. Service B needs a fact service A owns, and B must not read A’s tables. Every option below is a least-bad replacement for a join the engine used to do for free. You pick the pain you can operate.
 
-**Copies inside one database product** — leaders, followers,
-quorums, lag, failover — are
-[DDIA ch. 6](../../ddia/6-replication/). That chapter answers
-“how does *this store* keep replicas honest?” This chapter
-answers “**how does another service read my data?**” A follower
-of *your* Postgres is still *your* quantum. A column copied
-into *their* database is a **cross-quantum** contract. Do not
-call a follower “the data access pattern,” and do not call a
-replicated cache “multi-leader replication.”
-
-Freshness of a *single cluster’s* reads (linearizability) is
-[DDIA ch. 10](../../ddia/10-consistency-and-consensus/). Stale
-*application* copies are an ownership + access choice
-([ch. 9](../9-data-ownership/) plus this folder). Same English
-word “consistency,” different job.
-
-## The mental model
+You did not remove the join. You picked where it runs and how wrong it is allowed to be.
 
 ```
   Service B needs a fact Service A owns.
@@ -56,280 +33,107 @@ word “consistency,” different job.
                     the join becomes a product
 ```
 
-The sentence to keep: **you did not remove the join; you picked
-where it runs and how wrong it is allowed to be.**
+“Just call the other service” is a pattern with a cost, not a default. “Just replicate” is also a pattern. It is not the same thing as a database product copying its own log to a follower. A follower of A’s database is still A’s quantum: same product, same failover story, usually the whole dataset. A **quantum** is the unit you deploy and restore together, code plus the data it writes. A column copied into B’s database is a cross-quantum contract. A replicated cache is not multi-leader replication. Multi-leader means two copies both accept writes. A cache and a column copy must not.
 
-Two consequences. First, “just call the other service” is a
-pattern with a cost, not a default. Second, “just replicate”
-is also a pattern — and it is **not** DDIA replication unless
-the copy is still inside A’s store under A’s failover story.
+Freshness inside one cluster — linearizability, a read guaranteed to see the latest committed write — is that cluster’s consistency. A stale *application* copy is an ownership and access choice. Same word, “consistency,” different job.
+
+`HTTP GET` in a loop makes the neighbor’s latency and outage into your objective. Copying entire tables into every service “for speed,” with no invalidation story, spends a year on ghosts. Reads have an architecture. It is not `SELECT … JOIN`.
 
 ## Interservice communication
 
-B, at read time, asks A (RPC, HTTP, maybe GraphQL to A). A
-answers from the system of record. B joins in memory.
+At read time, B asks A — a remote call, HTTP, maybe a query language aimed at A. A answers from the system of record. B joins in memory.
 
-**Problem** — B cannot see A’s tables. The fact changes often
-enough that a copy would lie during the user’s session. Volume
-of the lookup is modest, or A is already in the request.
-**Solution** — A **read API** with a tight contract: the fields
-B needs, not A’s internal row. Timeouts, retries that are safe
-for reads, a bulk endpoint if you would otherwise N+1. Circuit
-breaker with a **defined** degraded UI (empty, cached, error).
-**Failure mode** — Chatty entity getters (`GET /customers/1`,
-then `/2`, …) from a list endpoint. You reimplemented a nested
-loop join on the network. Also: treating A’s downtime as
-“unexpected.” You chose runtime coupling; A’s error budget is
-now B’s.
+B cannot see A’s tables. The fact changes often enough that a copy would lie during the user’s session. The volume of the lookup is modest, or A is already on the request. Give B a read API with a tight contract: the fields B needs, not A’s internal row. Timeouts, retries that are safe for reads, and a bulk endpoint if the alternative is one call per item. A circuit breaker needs a defined degraded interface: empty, a cached value, or an error. Pick which.
 
-This pattern maximizes **freshness** and **ownership clarity**
-(A still has the only truth). It maximizes **dynamic coupling**
-([ch. 2](../2-coupling/)): B cannot serve the screen if A is
-sad. It is the least-bad join when:
+Chatty entity getters — `GET /customers/1`, then `/2`, and so on — from a list endpoint reimplement a nested-loop join on the network. That is the N+1 you see in traces after a monolith split. The review demand is a bulk contract: one call that accepts the set of keys, or a copy so the list does not fan out. Treating A’s downtime as “unexpected” denies the choice you made. You chose runtime coupling. A’s error budget is now B’s. This is **dynamic coupling**: B cannot serve the screen if A is down.
 
-- the user would notice staleness of seconds,
-- the other service is on the path anyway,
-- fan-out is bounded (one or a few keys, not a table scan).
+This pattern maximizes freshness and ownership clarity. A still has the only truth. It is the least-bad join when the user would notice staleness of seconds, when the other service is on the path anyway, and when fan-out is bounded — one key or a few, not a table scan.
 
-It is a bad join replacement when B’s page is a **report** over
-thousands of A’s rows. That was a SQL join for a reason; you
-want a copy, a cache of an aggregation, or a data domain that
-*is* the report.
+It is a bad replacement when B’s page is a report over thousands of A’s rows. That was a SQL join for a reason. You want a copy, a cache of an aggregation, or a data domain that *is* the report. A call for a warehouse-shaped screen will time out.
 
-**Problem** — One user action fans out to five owners.
-**Solution** — That is no longer “a join.” It is a workflow
-or a BFF that is becoming a
-[data domain](#data-domain-pattern). Count hops against the
-budget from [ch. 7](../7-service-granularity/).
-**Failure mode** — An API gateway that joins everything
-because teams refused these four patterns. The gateway is now
-the monolith.
+One user action that fans out to five owners is no longer “a join.” It is a workflow, or a backend-for-frontend that is becoming a data domain. Count the hops against a budget. Each synchronous hop is an objective you inherited. An API gateway that joins everything, because teams refused the four patterns, is the monolith again. The gateway is now the only place that knows how the screen is built.
 
 ## Column schema replication
 
-Physically **copy some columns** (not necessarily whole rows)
-from A’s store into B’s store. B joins locally again. A remains
-the writer of the *source*; the copy is derived.
+Physically copy some columns — not necessarily whole rows — from A’s store into B’s store. B joins locally again. A remains the writer of the source. The copy is derived.
 
-**Problem** — B joins A’s fact on **almost every query** (names,
-status, currency). Calling A would dominate latency and error
-rates. A delay of seconds to minutes is acceptable.
-**Solution** — Replicate a **narrow, stable projection**: the
-columns B is allowed to see, keyed for B’s queries. Populate
-via events, CDC, or a constrained batch — the *plumbing* may
-look like [DDIA ch. 12](../../ddia/12-stream-processing/); the
-*decision* “B may store a copy of these columns” is this
-chapter. A owns schema change of the source; B owns not
-treating the copy as writable.
-**Failure mode** — Copying `SELECT *` so B can “do whatever.”
-You exported an ER diagram. Every `ALTER` on A breaks B.
-That is stamp coupling with extra disk
-([ch. 13](../13-contracts/)). Also: B **writes** the copied
-columns. That is [joint ownership](../9-data-ownership/), not
-access.
+B joins A’s fact on almost every query: names, status, currency. Calling A would dominate latency and error rates. A delay of seconds to minutes is acceptable. Replicate a narrow, stable projection: the columns B is allowed to see, keyed for B’s queries. Populate it by events, by change data capture, or by a constrained batch. The plumbing may look like a stream of changes. The decision “B may store a copy of these columns” is the access pattern. A owns schema changes of the source. B owns the discipline of not treating the copy as writable.
 
-Column replication is the least-bad join when:
+Copying `SELECT *` so B can “do whatever” exports an entity-relationship diagram. Every `ALTER` on A breaks B. That is stamp coupling with extra disk: B depends on the exact shape of A’s row. B writing the copied columns is joint ownership, not access. Two writers, one fact.
 
-- read path is **hot and local**,
-- the projected columns **rarely change shape**,
-- staleness has a number (SLO: “name lag < 30s”),
-- you can rebuild B’s copy from A (backfill is a requirement,
-  not a hope).
+Column replication is the least-bad join when the read path is hot and local, the projected columns rarely change shape, staleness has a number (an objective such as “name lag under 30 seconds”), and you can rebuild B’s copy from A. Backfill is a requirement, not a hope.
 
-It is a bad replacement when the copied attributes **are** the
-life cycle B is trying to run (you needed to delegate writes,
-not copy). It is also a bad replacement when A’s schema is a
-weekly moving target — you will spend the year on migrations
-of a shadow table.
+It is a bad replacement when the copied attributes *are* the life cycle B is trying to run. You needed to delegate the write to A, not to copy the column. It is also a bad replacement when A’s schema is a weekly moving target. You will spend the year migrating a shadow table. A column copy of a field the user edits in the other service *this minute* is a fight with the copy.
 
-Do not confuse this with **A’s read replica**. A replica is
-still A: same product, same failover, usually the whole
-dataset. Column replication is a **contractual subset** living
-in B’s quantum. Different operators, different backup, different
-lie.
+Do not confuse this with A’s read replica. A replica is still A: same product, same failover, usually the whole dataset. When that copy is wrong, A’s operators page. Column replication is a contractual subset living in B’s quantum: different operators, a different backup, a different lie. When B’s copy is wrong, B’s operators page, and they repair from A. “We replicated the database” in a service design has to say whose replica. If it is A’s follower, B still depends on A’s quantum. That is often fine for reporting. It is dishonest as independence.
 
-**Problem** — Two copies, a bug, whose number is right?
-**Solution** — A is right. B’s copy is a cache with a schema.
-Measure divergence. Never “repair” A from B.
-**Failure mode** — Two-way sync of columns. You invented
-multi-leader across services. Stop. Read DDIA 6 for why that
-hurts, then delete the reverse pipe.
+Two copies and a bug: whose number is right? A is right. B’s copy is a cache with a schema. Measure divergence. Never repair A from B. Two-way sync of columns invents multi-leader replication across services: both sides accept writes, and conflicts have no single owner. Delete the reverse pipe.
 
 ## Replicated caching
 
-B (or a fleet) keeps a **cache** of A’s facts: in-process,
-Redis, memcached, a CDN for public bits. Unlike column
-replication, the cache is **not** the query planner’s table;
-it is a performance layer with TTL or explicit invalidation.
+B, or a fleet of B, keeps a cache of A’s facts: in-process, Redis, memcached, or a content-delivery network for public bits. Unlike a column copy, the cache is not the query planner’s table. It is a performance layer with a time-to-live or with explicit invalidation.
 
-**Problem** — The same keys are read constantly; A would melt
-or the hop would dominate; slightly stale is OK for this
-view (feature flags, avatars, product title, session-ish
-documents).
-**Solution** — Cache with a **stated freshness**. Prefer
-**invalidation events** from A (or versioned keys) over
-guessing TTLs for correctness-sensitive data. Stamp the
-cache with the owner’s version so you can detect resurrection
-of old values.
-**Failure mode** — “Redis, therefore architecture.” No TTL
-policy, no stampede control, no owner, writes to the cache
-as if it were a database. Also: caching a **join result**
-that includes B’s own mutable rows without a key that
-changes when *either* side changes. You will serve a
-Frankenstein row.
+The same keys are read constantly. A would melt, or the hop would dominate. Slightly stale is acceptable for this view: feature flags, avatars, a product title, session-shaped documents. Cache with a stated freshness. Prefer invalidation events from A, or versioned keys, over guessing a time-to-live for data where correctness matters. Stamp the cache entry with the owner’s version so a resurrected old value is detectable.
 
-Compared with column replication:
+“Redis, therefore architecture” has no expiry policy, no stampede control, no owner, and writes into the cache as if it were a database. Caching a join result that includes B’s own mutable rows, without a key that changes when *either* side changes, serves a Frankenstein row: half of it moved, the cache key did not.
 
-| | Column copy in B’s DB | Replicated cache |
+| | Column copy in B’s database | Replicated cache |
 |---|---|---|
-| Query | Real joins, indexes, txns with B’s rows | Get by key; joins in app |
+| Query | Real joins, indexes, transactions with B’s rows | Get by key; joins in the application |
 | Durability | Survives B’s restart | Often ephemeral |
-| Staleness | Pipeline lag | TTL / invalidation lag |
-| Schema | Explicit columns (coupling) | Opaque blob or small struct |
+| Staleness | Pipeline lag | Time-to-live or invalidation lag |
+| Schema | Explicit columns (that coupling is the cost) | Opaque blob or a small struct |
 | Fit | Many query shapes on the copy | Hot keys, simple lookup |
 
-Cache is the least-bad join when the access is **point-get of
-hot keys**, not “give me everyone in region West.” A scan of
-a cache is a cry for a table (column copy) or a data domain.
+A cache is the least-bad join when the access is a point lookup of hot keys, not “give me everyone in region West.” A scan of a cache is a cry for a table (a column copy) or for a data domain.
 
-**Problem** — Invalidation never quite works (missed event,
-TTL too long, clock tricks).
-**Solution** — Bound the lie: max TTL, version checks, and
-a path to **fall back to A** on miss or on “must be right.”
-If you cannot fall back, you needed a column copy you can
-rebuild, or you needed to call A.
-**Failure mode** — Cache-aside from B without A knowing.
-A updates; B serves ghosts until TTL. For some screens that
-is fine. For “is this seat free?” it is a bug with a logo.
+Invalidation never quite works: a missed event, a time-to-live that is too long, clock tricks. Bound the lie. A maximum time-to-live, a version check, and a path that falls back to A on a miss or when the value must be right. If you cannot fall back, you needed a column copy you can rebuild, or you needed to call A.
 
-A cache of A inside A’s quantum (A’s Redis in front of A’s
-DB) is **A’s performance**. It is not a distributed access
-pattern. This chapter starts when **B** holds the bytes.
+Cache-aside from B, without A knowing, means A updates and B serves ghosts until expiry. For some screens that is fine. For “is this seat free?” it is a bug with a logo. A cache used to allocate the last item will oversell. That is a write-time invariant, not a read trick. The owner has to perform the allocation.
 
-## Data domain pattern
+A cache of A inside A’s quantum — A’s Redis in front of A’s database — is A’s performance. It is not a distributed access pattern. This lesson starts when **B** holds the bytes.
 
-Create (or designate) a service whose **product is the join**:
-a new data domain that owns a combined view, or that
-orchestrates the read so every consumer does not invent
-pattern 1–3 alone.
+A cache that is the only copy of a fact has lost the system of record. That is not access. That is a new owner by accident.
 
-**Problem** — Many services need the same combination (ticket
-+ assignee + customer snippet; order + payment state +
-shipment). Each team copies the same three calls or the same
-columns. The join *is* a business concept (“dispatch board,”
-“account snapshot”).
-**Solution** — A **read-oriented domain** with a contract:
-it knows how fresh each part is, how to rebuild, whom to
-page. Writers remain the owners from ch. 9. This domain is
-allowed to store a **serving view** (that view is derived
-data; do not let it become a second writer of source facts).
-**Failure mode** — A “God read service” that becomes the
-only way to get *any* field, including ones a consumer
-should have called A for. Or a domain that **writes** back
-into A and B “to keep them aligned” — that is a hidden
-orchestrator of writes ([ch. 9](../9-data-ownership/) /
-[ch. 11](../11-distributed-workflows/)), not access.
+## The data-domain pattern
 
-This is the least-bad join when:
+Create or designate a service whose product is the join: a data domain that owns a combined view, or that orchestrates the read so every consumer does not invent the first three patterns alone.
 
-- the combination is **reused**,
-- freshness rules are **non-trivial** (mix of live and stale),
-- you want **one** place to apply authorization on the
-  combined picture,
-- hop-count for the user journey is better as **one** call
-  to the view than as a mesh of peers.
+Many services need the same combination: ticket plus assignee plus a customer snippet, or order plus payment state plus shipment. Each team copies the same three calls or the same columns. The join *is* a business concept: a dispatch board, an account snapshot.
 
-It is a bad replacement when only **one** consumer needs the
-join — then that consumer *is* the join (BFF or pattern 1)
-and an extra service is granularity theater
-([ch. 7](../7-service-granularity/)).
+A read-oriented domain has a contract. It knows how fresh each part is, how to rebuild, and whom to page. The writers remain the single owners of the source facts. This domain may store a **serving view**. That view is derived data. It must not become a second writer of the source facts.
 
-The data domain pattern is how [ch. 6](../6-operational-data/)
-“domains” re-enter on the **read** side. Do not confuse a
-serving view with splitting the write database. Writes still
-have single owners. The new domain owns a **projection**.
+A “god read service” that becomes the only way to get any field, including fields a consumer should have called A for, hides the simple patterns inside one bottleneck. A domain that writes back into A and B “to keep them aligned” is a hidden orchestrator of writes, not an access pattern. Write orchestration belongs with ownership: delegate to the owner, or run an explicit workflow that compensates. It does not belong in a read model that quietly mutates sources.
 
-## When each is the least-bad join replacement
+This is the least-bad join when the combination is reused, when freshness rules are non-trivial (a mix of live and stale parts), when you want one place to apply authorization on the combined picture, and when the user journey is cheaper as one call to the view than as a mesh of peers. Search, recommendations, and a board interface are usually this pattern, or a projection owned the same way, not twenty calls.
 
-There is no ranking from “good” to “bad.” There is a matching
-problem.
+It is a bad replacement when only one consumer needs the join. That consumer *is* the join — a backend-for-frontend, or a direct call to A — and an extra service is granularity theater. You staffed a service instead of a query. A one-off admin join is the same mismatch.
 
-```
-  Need the join. Ask, in order:
+Data domains also exist on the write side: groups of tables with one life cycle and one owner. A serving view is not that split. Writes still have single owners. The new domain owns a projection.
 
-  1. Is staleness forbidden on this path, and is fan-out tiny?
-        -> interservice call
-  2. Is this a hot point-get with a bounded lie?
-        -> replicated cache (fallback to 1 on miss)
-  3. Does B query the foreign fact in many shapes, locally?
-        -> column schema replication (narrow projection)
-  4. Do many consumers share this combination / freshness mix?
-        -> data domain (serving view)
-  5. Is the join actually a write-time invariant?
-        -> you are in the wrong chapter (go back to 7 / 9)
-```
+## Which replacement to pick
 
-**Problem** — A review that picks a pattern by fashion
-(“events,” “Redis,” “graph of calls”).
-**Solution** — Walk the questions. Write the **lie you
-accepted** (0 ms, 30 s, TTL 5 min, nightly). If you cannot
-name the lie, you are still imagining a SQL join.
-**Failure mode** — Using all four for the same fact
-“for resilience.” You now have four lies and no owner for
-the screen. Pick **one primary** read path; extra layers
-need a reason (cache in front of a call is normal; cache
-plus column copy plus a domain plus a call is a maze).
+There is no ranking from good to bad. There is a matching problem. Ask in order:
 
-A few sharp mismatches:
+1. Is staleness forbidden on this path, and is fan-out tiny? Call A.
+2. Is this a hot point-lookup with a bounded lie? Use a replicated cache, and fall back to a call on a miss.
+3. Does B query the foreign fact in many shapes, locally? Replicate a narrow column projection.
+4. Do many consumers share this combination and this mix of freshness? Build a data domain, a serving view.
+5. Is the join actually a write-time invariant? You are in the wrong problem. Keep the tables in one quantum, or give the write to a single owner and delegate. A read trick will not hold an invariant.
 
-- **Call** for a warehouse-shaped screen: you will time out.
-- **Column copy** of a field the user edits in the other
-  service *this minute*: you will fight the copy.
-- **Cache** for “allocate the last item”: you will
-  oversell. That is a write invariant, not a read trick.
-- **Data domain** for a one-off admin join: you will staff
-  a service instead of a query.
+A review that picks a pattern by fashion — “events,” “Redis,” “a graph of calls” — has not named the lie. Walk the questions. Write the lie you accepted: 0 milliseconds, 30 seconds, a five-minute time-to-live, nightly. If you cannot name the lie, you are still imagining a SQL join.
 
-## How this shows up when you design something
+Using all four patterns for the same fact “for resilience” produces four lies and no owner for the screen. Pick one primary read path. Extra layers need a reason. A cache in front of a call is normal. A cache plus a column copy plus a domain plus a call is a maze.
 
-- N+1 in the traces after a monolith split: you defaulted
-  to pattern 1 without a bulk API or a copy.
-- “We replicated the DB” in a service design: ask *whose*
-  replica. If it is A’s follower, B still depends on A’s
-  quantum — often fine for reporting, dishonest as
-  independence.
-- Search, recommendations, or a board UI: usually a data
-  domain or a projection, not twenty calls.
-- A cache that is the only copy of a fact: you lost the
-  system of record. That is not access; that is a new
-  owner by accident.
+A team that wants Redis *and* a shadow table *and* a live call for the same customer name deletes down to one primary. The name on a hot list, slightly stale, can be a cache with fallback. The name joined in many local query shapes can be a narrow column copy with a lag objective. The name that must be current on this path, for one or a few keys, is a call. It is not all three.
 
-## Check yourself
+Sharp mismatches, collected:
 
-1. In one sentence, DDIA 6 vs this chapter: replica of a
-   store vs another service’s read. Give a sentence you
-   would reject for merging them.
-2. Interservice reads: what makes N+1 the failure mode, and
-   what bulk contract would you demand in review?
-3. When is calling A on every page *better* than a column
-   copy? Name freshness and fan-out.
-4. Column schema replication: which columns do you refuse
-   to copy, and what ownership bug appears if B writes
-   them?
-5. Why is A’s read replica not “column replication into B”?
-   Who pages when the copy is wrong?
-6. Replicated cache vs column copy: pick a screen for each.
-   What query shape kills the cache pattern?
-7. Invalidation missed an event. What bound (TTL, version,
-   fallback) did your design require, and what product bug
-   appears if it required none?
-8. Data domain as join replacement: when is it granularity
-   theater, and when is the combination itself a product?
-9. A team wants Redis *and* a shadow table *and* a live
-   call for the same customer name. What do you delete,
-   and which pattern stays?
-10. “This join is a write-time invariant.” Which chapter
-    do you open instead of this one, and which technique
-    (ownership or granularity) is the real fix?
+- A call for a warehouse-shaped screen times out.
+- A column copy of a field the user edits in the other service this minute fights the copy.
+- A cache for “allocate the last item” oversells. That is a write invariant.
+- A data domain for a one-off admin join staffs a service instead of a query.
 
-Continue to [Distributed workflows](../11-distributed-workflows/).
+## Recap
+
+After a single owner holds the tables, a reader replaces the join in one of four ways. Call the owner when the value must be fresh and the fan-out is small, and pay with that owner’s outages. Copy a narrow, rebuildable projection when local queries dominate and a measured lag is acceptable; the owner stays the truth, and the reader does not write the copy. Cache hot keys with a bound on the lie and a fallback, and do not allocate scarce inventory from the cache. Stand up a read-oriented domain when many consumers share one combination and one freshness mix. One primary path per fact. A write-time invariant is not a read pattern.

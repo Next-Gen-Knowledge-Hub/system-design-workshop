@@ -1,36 +1,20 @@
 # 7. Sharding
 
-Companion notes for **Chapter 7** of *Designing Data-Intensive Applications*
-(2nd ed.). The first edition called this **partitioning**. Same idea:
-when one replica set cannot hold the data or the **write** QPS, you
-**split** the dataset across independent groups of nodes. Each piece
-is a **shard** (partition). Replication (ch. 6) copies the same data;
-sharding splits different data.
+These notes teach sharding from *Designing Data-Intensive Applications*, 2nd edition, by Martin Kleppmann and Chris Riccomini.
 
-Normally each record belongs to **exactly one** shard. That shard is
-usually **replicated**, so the record still lives on several machines
-for fault tolerance. A node may store many shards: leader for some,
-follower for others. The picture is a chessboard, not three giant
-replicas of the whole database.
+## What sharding is
 
-## What this chapter is for
+Sharding splits a dataset across independent groups of nodes when one replicated group cannot hold the bytes or the write rate. Each piece is a **shard**. The first edition of the book called the same idea partitioning. Normally each record belongs to exactly one shard.
 
-Sharding buys **scale** (data size and write throughput) and sometimes
-**tenancy isolation**. It costs: cross-shard queries, cross-shard
-transactions (ch. 8), rebalancing, and a routing layer. Hot spots can
-make ten nodes behave like one.
+That shard is usually itself replicated: the same record still lives on several machines so one disk failure does not lose it. A single machine often stores many shards, as leader for some and follower for others. The picture is a chessboard of small replicated groups, not three giant copies of the whole database.
 
-Read scale alone does **not** require sharding — replicas (ch. 6) are
-the first lever. Shard when **one leader cannot take the writes** or
-**one node cannot hold the bytes**.
+Replication copies the same data so a read can move and a failure can be survived. Sharding puts *different* data on different nodes so writes and bytes can grow. Read scale alone does not require sharding. Extra replicas, caches, and better indexes are the first levers for reads. Shard when one leader cannot take the writes, or one node cannot hold the bytes.
 
-The choice of sharding scheme is mostly independent of the replication
-style. This chapter ignores replication on purpose; in a real design
-you still draw both.
+The choice of sharding scheme is mostly independent of how each shard replicates. A real design still draws both: who leads each shard, and which keys that shard owns.
 
-## Names, and what this is not
+Sharding buys scale — data size and write throughput — and sometimes isolation between tenants. It costs cross-shard queries, cross-shard transactions, rebalancing, and a routing layer. A hot spot can make ten nodes behave like one, because every popular key still lands on a single leader.
 
-Vendors do not share a word:
+Vendors do not share a word for the slice:
 
 | You might hear | In |
 |---|---|
@@ -38,339 +22,162 @@ Vendors do not share a word:
 | Range | CockroachDB |
 | Region | HBase, TiDB |
 | vBucket | Couchbase |
-| vnode / token-range | Riak / Cassandra |
+| vnode or token-range | Riak, Cassandra |
 | Tablet | Bigtable, Yugabyte, Scylla |
 
-**PostgreSQL partitioning** is usually *files on one machine* (drop a
-partition = delete a file fast). **Sharding** is *across machines*.
-Some products use both words for the same thing. This folder means
-**across machines**.
+**PostgreSQL partitioning** usually means files on one machine: dropping a partition deletes a file quickly. **Sharding** in these notes means the split is across machines. Some products use both words for the same thing.
 
-Unrelated: a **network partition** (ch. 9) is a broken link, not a
-piece of the keyspace.
+A **network partition** is a broken link between nodes. It is not a piece of the keyspace. The word *shard* itself is folklore — Ultima Online’s split worlds, or an old acronym. The idea you need is one of several parallel slices of the data.
 
-The word *shard* itself is folklore (Ultima Online’s split worlds, or
-an old acronym). You only need the idea: **one of several parallel
-slices of the data**.
+## A shard and its replicas
 
-## Combining sharding and replication
+Each shard is a small database with its own leader. A write for a key goes to that shard’s leader, and the followers of that shard replay it.
 
-```
-          shard 1                  shard 2                  shard 3
-       ┌────────────┐           ┌────────────┐           ┌────────────┐
-node A │ LEADER     │           │ follower   │           │ follower   │
-       └────────────┘           └────────────┘           └────────────┘
-       ┌────────────┐           ┌────────────┐           ┌────────────┐
-node B │ follower   │           │ LEADER     │           │ follower   │
-       └────────────┘           └────────────┘           └────────────┘
-       ┌────────────┐           ┌────────────┐           ┌────────────┐
-node C │ follower   │           │ follower   │           │ LEADER     │
-       └────────────┘           └────────────┘           └────────────┘
-```
+Picture three nodes and three shards. Node A leads shard 1 and follows shards 2 and 3. Node B leads shard 2 and follows the other two. Node C leads shard 3. A write whose key hashes or ranges into shard 2 goes to node B, and nodes A and C replay that shard’s log as followers. Writes scale when keys spread across shards. A key that everyone hits stays on one leader, and the other nodes do not help that key.
 
-Each shard is a mini-database with its own leader. Writes for a key
-go to **that** shard’s leader. You have scaled writes **if** keys
-spread. You have not scaled a key that everyone hits.
+What you gain when the spread is real:
 
-## Pros, cons, and why teams shard too early
+- Horizontal scale: add machines, add capacity, if the load is even.
+- A smaller blast radius: one shard’s compaction storm or restore is not the whole dataset.
+- A place to pin a tenant or a key range to a geography.
+- Operations that are cheap per shard — drop old data, compact, vacuum — stay bounded by one shard’s size.
 
-**Pros**
+What you take on:
 
-- Horizontal scale: add boxes, add capacity, if load is even.
-- Smaller blast radius: one shard’s compaction storm or restore is
-  not the whole dataset.
-- Possible **geo** placement of a tenant or a key range.
-- Operations that are cheap per shard (drop old data, compact, vacuum)
-  stay bounded.
+- A `JOIN` or a `UNIQUE` constraint across the whole dataset needs extra machinery: scatter-gather (ask every shard and merge), a global index, or a transaction manager that can commit on more than one shard.
+- Schema change, backup, rolling restart, and “run this backfill” multiply by the shard count.
+- The shard key is close to a one-way decision. Changing it rewrites the cluster.
+- A cross-shard write can commit on one shard and fail on the other. That partial success is a transaction problem, not a footnote of the router.
 
-**Cons**
+## Sharding for many tenants
 
-- You cannot `JOIN` or `UNIQUE` across the whole dataset without extra
-  machinery (scatter-gather, global indexes, or a txn manager — ch. 8).
-- Schema change, backup, rolling restart, and “run this backfill”
-  multiply by shard count.
-- Picking a **shard key** is a one-way-ish decision. Changing it means
-  rewriting the cluster.
-- Cross-shard writes: one shard commits, another fails — partial
-  success. That is the next two chapters, not a footnote.
+SaaS products often shard by `tenant_id`, so one customer’s data and load sit in a box you can enlarge, migrate, or isolate.
 
-**Reads vs writes.** If the pain is reads, try replicas, caches, and
-better indexes (ch. 4) first. Sharding is how you split **leaders**.
+That placement does three jobs:
 
-## Sharding for multitenancy
+- **Noisy-neighbor control.** A heavy tenant does not eat everyone’s buffer pool. Cells or pods of tenants are the same idea at a coarser grain: AWS cell-based architecture groups tenants so one cell’s failure stays inside that cell.
+- **Compliance.** Deleting one tenant, or pinning that tenant to an EU region, is a shard operation instead of a scan of the whole table.
+- **Schema rollout.** You migrate tenant by tenant instead of one giant `ALTER`. Tenants with requests in flight still need a story; products exist specifically to do transactional schema change across tenant databases.
 
-SaaS products often shard by `tenant_id` so one customer’s data and
-load sit in a box you can enlarge, migrate, or isolate.
+Three shapes go wrong:
 
-What that buys:
+- One tenant is 90% of traffic, or even 40% of queries per second. That tenant *is* the hot spot. More shared shards do not help. That tenant needs its own shard, or several shards of its own.
+- Tiny tenants: thousands of almost-empty shards waste connections and file handles. Pack many small tenants onto one shard, and split when one of them grows.
+- A query that ignores the tenant — “all unpaid invoices in the country” — becomes scatter-gather or a warehouse job. That is often the right answer. It is not a reason to put the operational store back on one machine.
 
-- **Noisy-neighbor control** — a heavy tenant does not eat everyone’s
-  buffer pool. Cells / pods of tenants are the same idea at a coarser
-  grain (AWS “cell-based” architecture).
-- **Compliance** — deleting one tenant, or pinning them to an EU
-  region, is a shard operation instead of a table scan of the world.
-- **Schema rollout** — you can migrate tenant-by-tenant instead of
-  one giant `ALTER`. (You still need a story for *in-flight* tenants;
-  products exist specifically for transactional schema change across
-  tenant databases.)
+Citus-style **schema-based sharding** (one Postgres schema per tenant) is this pattern in Postgres vocabulary.
 
-Ugly cases:
+## From a key to a shard
 
-- One tenant is 90% of traffic — they *are* a hot spot. They need
-  their own shard (or several), not “more shared shards.”
-- Tiny tenants: thousands of almost-empty shards waste connections
-  and file handles. Pack many small tenants per shard; split when
-  they grow.
-- Queries that ignore tenant (“all unpaid invoices in the country”)
-  become scatter-gather or a warehouse job. That is often the right
-  answer, not a reason to unshard OLTP.
+You need a function from key to shard. It has to be cheap to compute, and stable until you intentionally move data.
 
-Citus-style **schema-based sharding** (one schema per tenant) is this
-pattern with Postgres vocabulary.
+The key is often **compound**: a **partition key** chooses the shard, and a **sort key** orders rows inside that shard. “All events for this user, in this time range” is then a local range scan on one shard. “All events in this hour, for every user” is not, because the hour is not what chose the shard.
 
-## Sharding of key-value data
+### Ranges of keys
 
-You need a function: `key → shard`, cheap to compute, stable until
-you *intentionally* move data.
+Keys stay sorted. Shard 1 owns `A–F`, shard 2 owns `G–M`, and so on. A range scan — “all orders whose ids fall in today,” when ids sort by time — stays on a few shards. Adjacent keys share a node, which is good for locality and bad when the adjacent keys are all hot.
 
-Often the key is **compound**: a **partition key** (which shard) plus
-a **sort key** (order *inside* the shard). Then “all events for this
-user, time range” is a local range scan. “All events in this hour,
-every user” is not.
+**Hot ranges** are the failure. Sequential ids, the latest timestamp, and a popular prefix such as `status = new` all pile inserts onto the newest range. Nine other shards sit idle. That is why a UUID primary key combined with range sharding, and a timestamp used as the partition key, both need a second look: the values people insert *now* are neighbors, so they share a shard.
 
-### By key range
+Systems that **auto-split** a range that grew too big or too hot — HBase, CockroachDB, MongoDB range sharding, Bigtable tablets — exist because humans guess the boundaries badly. A split is not free. It rewrites files (the same cost family as LSM compaction, merging immutable sorted files) and it often hits the shard that is already overloaded. Plan for the split cost, or the split happens during the incident.
 
-Keys are sorted; shard 1 owns `A–F`, shard 2 `G–M`, … Range scans
-(“all orders whose ids fall in today,” if ids are time-sortable)
-stay on few shards. Adjacent keys share a node — good for locality,
-bad when adjacent keys are **all hot**.
+Worked example, sequential invoices. Invoice numbers increase by one, and ranges own contiguous numbers. At noon every insert lands in the highest range, on one leader. A partition key that spreads — a hash of customer id, with the invoice number as the sort key inside that customer’s shard — moves the insert load with the customers. You lose the single range scan of “every invoice issued in the last hour”; that query becomes scatter-gather or a separate reporting path.
 
-**Hot ranges** are the failure mode: sequential ids, latest
-timestamp, a popular prefix (`status=new`). The newest range takes
-all the inserts; nine other shards sit idle. This is why “UUID
-primary key + range sharding” and “timestamp as the partition key”
-need a second look.
+### A hash of the key
 
-Systems that **auto-split** a range that grew too big or too hot
-(HBase, Cockroach, Mongo range, Bigtable tablets) exist because
-humans guess boundaries badly. Split is not free: it rewrites files
-(think LSM compaction) and often hits the shard that is **already**
-overloaded. Plan for split cost, or you split during the incident.
+Hash the partition key, then map the hash onto shards. A good hash turns skewed keys into a flat space: similar strings do not land near each other. The same input always hashes the same. This is not cryptography. MongoDB historically used MD5. Cassandra and Scylla use Murmur3. A language’s `hashCode()` is not safe across processes, versions, or languages. Do not shard on it.
 
-### By hash of key
+You get even load for point reads. You pay for it: a range scan becomes scatter-gather unless the range sits *inside* one partition key, walking the sort key. “All orders today” with `hash(order_id)` hits every shard.
 
-Hash the partition key, then map the hash onto shards. A good hash
-turns skewed *keys* into a flat space: similar strings do not land
-near each other. Same input always hashes the same — this is not
-cryptography. Mongo historically used MD5; Cassandra/Scylla use
-Murmur3. **Language `hashCode()` is not safe** across processes,
-versions, or languages; do not shard on it.
+`hash(key) % node_count` falls apart when you add a node. Almost every key’s remainder changes, so almost all data moves. Systems that keep order inside a partition, such as Kafka, also break that ordering, because keys that shared a partition no longer do.
 
-You buy even load for point gets. You pay: **range scans become
-scatter-gather** unless the range is *inside* one partition key
-(sort key). “All orders today” with `hash(order_id)` hits every
-shard.
+The fixes all separate “which shard” from “which node”:
 
-**`hash(key) % node_count` is a disaster when you add a node.**
-Almost every key’s remainder changes, so almost all data moves, and
-systems that order by partition (Kafka) also **break ordering**.
+1. **A fixed shard count.** Hash into 1024 virtual shards, or 4096, or some other number you choose up front, then map shards onto nodes. Adding a node moves whole shards. It does not recompute the key’s shard. Kafka topic partitions are this pattern: changing the partition count reshuffles keys. Pick a count you can live with.
+2. **Consistent hashing.** Picture a ring. Each node owns an arc. Adding a node steals a slice from its neighbors instead of reshuffling every key. Virtual nodes — many arcs per physical machine — average out luck. Cassandra and Scylla look like this, with many token ranges per node. “Consistent” here means a key tends to stay on the same shard when the cluster grows. It does not mean ACID consistency (the transactional all-or-nothing guarantees a database offers for a group of reads and writes).
+3. Other algorithms with the same two promises — balanced load, and little key movement when the node count changes — include **rendezvous hashing** (highest random weight: score the key against every node and pick the winner) and **jump consistent hashing**. Some of them move individual keys onto the new node rather than splitting ranges. Which is better depends on whether you would rather move a few big files or many small key ranges.
 
-Usual fixes — all of them **decouple “which shard” from “which
-node”**:
+### One key that is hot
 
-1. **Fixed shard count.** Hash to 1024 (or 4096, …) virtual shards;
-   map shards → nodes. Add a node by **moving whole shards**, not
-   remapping keys. Kafka’s topic partitions are this: changing
-   partition count **reshuffles keys**. Pick a number you can live
-   with.
-2. **Consistent hashing** (the ring, often with **virtual nodes** per
-   physical box). Adding a node steals a slice of the ring from
-   neighbors instead of reshuffling everything. Cassandra/Scylla
-   look like this (many token ranges per node so luck averages out).
-3. Other algorithms with the same two promises — **balanced load**,
-   **minimal key movement when N changes** — e.g. **rendezvous
-   (highest random weight)** and **jump consistent hashing**. Some
-   move *individual keys* onto the new node rather than splitting
-   ranges. Which is better depends on whether you want to move a
-   few big files or many small key ranges.
+Hashing spreads keys. It does not spread a single key. A celebrity `user_id`, a flash-sale `product_id`, or a `status = 'new'` queue that every worker polls: one partition, one leader, and the rest of the cluster is idle for that traffic.
 
-“Consistent” here is **not** ACID consistency. It means a key tends
-to **stay on the same shard** when the cluster grows.
+The workarounds are all imperfect:
 
-### Skewed workloads and relieving hot spots
+- **Isolate** the hot key on its own shard or its own hardware. A range-based system can put one key in a shard by itself.
+- **Cache** the hot read path so the shard is not serving the website.
+- **Split writes** with a random suffix, `product_id + 00..99`. Writes fan out across many shards. Reads must gather those shards and merge. Track which keys are in this special mode. Viral load is temporary, so you want a way to **unsalt** later and collapse the key back to one shard.
+- **Change the product** so the hot path is not one row. Fan-out on write for a celebrity — write the event to each follower’s feed at write time — moves the cost off the single key.
 
-Hashing spreads *keys*. It does not spread a **single key**. A
-celebrity `user_id`, a flash-sale `product_id`, a `status = 'new'`
-queue everyone polls: one partition, one leader, the rest of the
-cluster applauds.
+Cloud systems market adaptive capacity and heat management. Read that as “they will try to move load.” It does not replace a key that was chosen so one row stays writable.
 
-Tricks, all imperfect:
+Write-hot and read-hot keys need different treatments. A viral post is often read-hot: cache it. A counter everyone increments is write-hot: shard the counter, or accept a single-leader bottleneck on that one key.
 
-- **Isolate** the hot key on its own shard / dedicated hardware
-  (range-based systems can put one key in a shard by itself).
-- **Cache** the hot read path so the shard is not the website.
-- **Split writes** with a random suffix (`product_id + 00..99`).
-  Writes fan out; **reads must gather and merge**. Track which keys
-  are in this special mode; viral load is temporary, so you want
-  a way to **unsalt** later.
-- **Change the product** so the hot path is not one row (fan-out
-  on write for the celebrity — ch. 2).
+### Moving data when the cluster changes
 
-Cloud systems market **adaptive capacity / heat management**. Treat
-that as “they will try to move load,” not as a substitute for a
-sane key.
+When you add or remove nodes, some data must move. Two schools:
 
-Write-hot and read-hot keys need different treatments. A viral post
-is often read-hot (cache). A counter everyone increments is
-write-hot (shard the counter or accept a single-leader bottleneck).
+**Move whole shards** between nodes, with a fixed shard count. The key-to-shard map stays put. Only the shard-to-node map changes. Routing caches stay simple. You need enough shards that a new node can receive a fair share without splitting a shard in the middle of the move.
 
-### Rebalancing: automatic versus manual
+**Split and merge ranges**, whether the ranges are raw keys or hash ranges. This is more elastic, and it pays the split cost above: rewriting files on a shard that may already be busy.
 
-When you add or remove nodes, **some data must move**. Two schools:
+**Automatic rebalance** is convenient and can autoscale. It is also how a **cascading failure** starts:
 
-**Move whole shards** between nodes (fixed shard count). The
-key→shard map stays put; only shard→node changes. Simple routing
-cache. You need enough shards that you can give a new node a fair
-share without splitting mid-flight.
+1. One node is slow.
+2. The cluster declares it dead.
+3. Its shards move onto everyone else.
+4. Those nodes slow down under the extra copy traffic and the extra writes.
+5. More nodes are declared dead.
 
-**Split and merge ranges** (key-range or hash-range). More elastic;
-split cost as above.
+Rebalance is heavy on network and disk, and the shards must keep taking writes during the move. If you are already at the write ceiling, the split cannot keep up.
 
-**Automatic rebalance** is convenient and can autoscale. It is also
-how you get a **cascading failure**: one node is slow → declared
-dead → cluster moves its shards onto everyone else → they slow
-down → more false deaths. Rebalance is heavy (network + disk) and
-must continue to **take writes**. If you are already at write
-ceiling, the split cannot keep up.
+**Manual, planned rebalance** is slower and calmer. Run it before a known spike — Cyber Monday, a ticket drop — rather than during one. A human in the loop is a circuit breaker on a dangerous robot, not a rejection of automation.
 
-**Manual / planned rebalance** is slower and calmer. Use it before
-known spikes (Cyber Monday, ticket drops). A human in the loop is
-not anti-automation; it is a circuit breaker on a dangerous robot.
+Either way, move whole shards when you can, rather than random keys one by one. The map stays explainable.
 
-Either way: do not move **random keys** one by one if you can move
-**whole shards**. The map stays explainable.
+## How a request finds the shard
 
-## Request routing
+The client must reach a node that owns that key’s shard. A Kubernetes Service, or a generic load balancer, sends traffic to any healthy pod. That is correct for stateless application servers. It is wrong for a sharded store, unless every pod is a router that knows the map.
 
-The client must hit a node that **owns that key’s shard**. A Kubernetes
-Service or a generic load balancer sends traffic to *any healthy
-pod*. That is correct for **stateless** app servers and **wrong**
-for a sharded store unless every pod is a router.
+Three patterns:
 
-Three patterns (you will draw one of them):
+1. **Any node, then forward.** The client hits a random replica. If that node does not own the key, it proxies to the owner. Gossip, or a local copy of the map, has to be fresh enough. You pay an extra hop.
+2. **A routing tier.** `mongos`, Vitess vtgate, and many proxies are shard-aware. Clients stay simple. The proxy fleet becomes something you scale and debug on its own.
+3. **A smart client.** The client holds the map. The Redis Cluster protocol and Cassandra drivers work this way. Latency is the lowest of the three. Every language’s client has to implement the protocol correctly, and map updates have to arrive before the client sends a write to a node that no longer owns the key.
 
-1. **Any node, then forward.** Client hits a random replica; if it
-   is not the owner, it proxies. Gossip or a local copy of the map
-   must be good enough. Extra hop.
-2. **Routing tier** (`mongos`, Vitess vtgate, many proxies). Clients
-   are dumb; the proxy is shard-aware. The proxy fleet becomes a
-   thing you shard and debug.
-3. **Smart client.** The client has the map (Redis Cluster protocol,
-   Cassandra drivers). Lowest latency; every language client must
-   get the protocol right; map updates must be timely.
+The map — which shard lives on which node — is precious metadata. A typical design puts it in a small **strongly consistent** store (ZooKeeper, etcd, or the database’s own consensus group) and treats that store as a **consistent core**: a small cluster that agrees on one assignment. The core has to answer three questions:
 
-The map itself — **which shard lives on which node** — is precious
-metadata. Typical design: a small **strongly consistent** store
-(ZooKeeper, etcd, the database’s own consensus group) as a
-**consistent core**. Questions the core must answer:
+- One coordinator is the simple answer for who may change the assignment. That coordinator then needs high availability without **split-brain maps** — two coordinators, two truths. The same fencing used for a database leader applies: a generation number so a stale coordinator’s map is rejected.
+- Routers learn a move by watch, push, or poll, with generations, so a stale map is obvious rather than silently wrong.
+- During **cutover**, both the old node and the new node may hold the key for a moment. Reads and writes need a rule — forward, dual-write, or block — or the key silently splits and two nodes accept different updates.
 
-- Who is allowed to **change** the assignment? One coordinator is
-  simple; then that coordinator needs HA without **split-brain
-  maps** (two coordinators, two truths — same fencing problem as
-  ch. 6).
-- How do routers **learn** a move? Watch / push / poll with
-  generations so a stale map is obvious.
-- During **cutover**, both old and new node may have the data for a
-  moment. Reads and writes need a rule (forward, dual-write, block)
-  or you silently split the key.
+Service discovery (DNS, Kubernetes, Consul) finds IP addresses. Shard routing finds owners. Use DNS for “where is the proxy,” not for “where is key 42,” because an IP does not know which shard it leads this minute.
 
-Service discovery (DNS, k8s, Consul) finds **IPs**. Shard routing
-finds **owners**. Use DNS for “where is the proxy,” not for “where
-is key 42.”
-
-Analytics warehouses also shard, but a query **intentionally**
-touches many shards in parallel (ch. 11). OLTP routing is the
-opposite instinct: **one shard if you can**.
+Analytics warehouses also shard, and a query there intentionally touches many shards in parallel. Operational routing has the opposite instinct: one shard, if the query can be written that way.
 
 ## Secondary indexes
 
-A primary / partition key tells you which shard owns the row. A
-query by `email = …` or `WHERE color = 'red'` does not.
+The partition key tells you which shard owns the row. A query by `email = …`, or `WHERE color = 'red'`, does not.
 
 ### Local secondary indexes
 
-Each shard indexes **only its own rows**. Writes stay on one shard
-(update the row and that shard’s index together). Queries
-**scatter** to every shard and merge.
+Each shard indexes only its own rows. A write stays on one shard: update the row and that shard’s index together. A query scatters to every shard and merges the answers.
 
-Fine with tens of shards and a **selective** predicate. Painful at
-hundreds with an unselective one (“all red cars” when half the
-catalog is red): you paid for a fleet and then asked every node.
-
-This is the default mental model of “sharded SQL without magic.”
+That is fine with tens of shards and a selective predicate. It hurts at hundreds of shards with an unselective predicate — “all red cars,” when half the catalog is red — because you paid for a fleet and then asked every node. This is the default shape of sharded SQL without extra machinery.
 
 ### Global secondary indexes
 
-The index is sharded by the **secondary value** (`hash(email)`, or
-a range of terms). `email = x` goes to **one** (or few) index
-shards, which store **postings**: primary keys that match. Fetching
-the full records may still hop to other shards.
+The index is itself sharded by the secondary value: `hash(email)`, or a range of terms. `email = x` goes to one index shard, or a few, which store **postings**: the primary keys that match. Fetching the full records may still hop to other shards, because the posting is a pointer, not the row.
 
-Writes to one record can update **several** index shards (every
-term in a document). Keeping that atomic wants **distributed
-transactions** (ch. 8) or you accept **async index lag** (DynamoDB
-global secondary indexes — same class of bugs as replication lag
-in ch. 6). Cockroach / TiDB / Yugabyte invest here so SQL `WHERE`
-still works.
+A write of one record can update several index shards — every term in a document. Keeping that atomic wants a distributed transaction. The alternative is **async index lag**: the row commits now, and the index entry appears later. DynamoDB global secondary indexes are this class of bug, the same family as replication lag. CockroachDB, TiDB, and Yugabyte invest in distributed transactions here so a SQL `WHERE` still works.
 
-**Search engines** (Elasticsearch, Solr) *are* global inverted
-indexes: term → postings list. One term, one shard, cheap. Two
-common terms, two huge postings lists on different shards: the
-**AND** is a network-heavy intersection. Global indexes shine when
-postings are not huge and reads dominate writes.
+Search engines (Elasticsearch, Solr) *are* global inverted indexes: term to postings list. One term, one shard, is cheap. Two common terms mean two huge postings lists on different shards, and the `AND` is a network-heavy intersection. Global indexes shine when postings are not huge and reads dominate writes.
 
-## How this shows up when you design something
+`UNIQUE(email)` on a product sharded by `user_id` is one of three things. A global index sharded by email, so the uniqueness check hits one index shard. A transaction that spans the user shard and the email shard. Or a lie: a local unique index that only prevents duplicates inside one user shard, while two shards both store the same email.
 
-Always say:
+## Mechanism recap
 
-- **Shard key** (`user_id` / `tenant_id` is the usual honest default
-  for user-centric products). Call out the compound sort key if
-  range-within-user matters.
-- **Hash vs range**, and which queries become scatter-gather.
-- How a **new node** gets data (move shards vs split ranges) and
-  whether a human approves rebalance.
-- How a request **finds** the shard (smart client, proxy, forward)
-  and where the **map** lives.
-- What happens to **secondary** lookups (`email`, `geo`, full text):
-  local scatter vs global index vs “that is a warehouse query.”
-- The **hot key** story (celebrity, flash sale, `ORDER BY created_at`
-  on a range-sharded id).
-
-A design that shards by `user_id` and then needs “all unpaid
-invoices in the country” has just designed a **batch job** or a
-**global index**, whether they know it or not.
-
-Do not shard in an interview (or in week one of a startup) because
-the word sounds senior. Name the load parameter that a single
-leader cannot take.
-
-## Check yourself
-
-1. Why does `hash(key) % node_count` make adding a node a disaster,
-   and what is the usual fix?
-2. You shard orders by `customer_id`. How do you serve “orders
-   placed in the last hour” for ops?
-3. Local vs global secondary index: which hurts writes, which hurts
-   reads?
-4. A tenant is 40% of QPS. What do you do besides “add more
-   shards”?
-5. Sequential invoice numbers + range sharding: what happens at
-   noon, and what is one key design that avoids it?
-6. Automatic rebalancing declares a slow node dead and moves its
-   shards. Why can that take the whole cluster down?
-7. Why is a Kubernetes Service **not** a shard router?
-8. You need `UNIQUE(email)` for the whole product, but you shard by
-   `user_id`. What did you just buy: a global index, a txn across
-   shards, or a lie?
-
-Continue to [Transactions](../8-transactions/).
+- A record lives on one shard. That shard has its own leader and followers. Writes scale only when keys spread; a hot key stays on one leader.
+- Range sharding keeps local scans and piles sequential ids, timestamps, and prefixes like `status = new` onto one range. Hash sharding (MD5, Murmur3 — not `hashCode()`) flattens point reads and turns cross-key scans into scatter-gather.
+- `hash(key) % node_count` moves almost every key when a node arrives. Fixed virtual shards (1024, 4096), consistent hashing with virtual nodes, rendezvous hashing, and jump consistent hashing keep most keys put. Rebalance moves whole shards, or splits ranges, and an automatic move of a slow node’s data can cascade.
+- Clients find the owner through a forwarding node, a shard-aware proxy (`mongos`, vtgate), or a smart client. The assignment lives in a consistent core (ZooKeeper, etcd, or the database’s consensus group) with fencing, generations, and an explicit cutover rule. DNS finds the proxy, not key 42.
+- A local secondary index keeps writes on one shard and scatters reads. A global secondary index (and an inverted index in Elasticsearch or Solr) keeps selective reads on one index shard, spreads one document’s write across index shards, and either uses a distributed transaction or accepts async lag. Tenant sharding isolates load, deletion, and region, until one tenant is the hot spot or a query drops the tenant key.

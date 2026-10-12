@@ -1,27 +1,16 @@
 # 6. Pulling apart operational data
 
-Companion notes for **Chapter 6** of *Software Architecture: The Hard
-Parts* (Ford, Richards, Sadalage, Dehghani, 2021). You can split the
-code into services and still have **one system**: the shared operational
-database. This chapter is the work of cutting *that* knot, then choosing
-an engine **per domain** — not a tour of storage internals.
+These notes teach the operational-data split from *Software Architecture: The Hard Parts* (Ford, Richards, Sadalage, Dehghani, 2021).
 
-Skip it and you will “go microservices” while every deploy still waits
-on one schema migration, one connection pool, and one backup window.
-The services were a costume. The database was the architecture.
+## One database is still one system
 
-## See also (do not merge)
+A team can split a codebase into services and still be running one system. The knot that remains is the shared operational database: tickets, customers, billing, and inventory in one engine. That engine gives them one transaction, one connection pool, one write-ahead log, one backup window, and one outage. A deploy of any service still waits on one schema migration. The services were a costume. The database was the architecture.
 
-Picking a **data model** and a **storage engine** is
-[DDIA ch. 3](../../ddia/3-data-models/) and
-[DDIA ch. 4](../../ddia/4-storage-and-retrieval/). Those chapters
-answer “tables vs documents vs graphs” and “B-tree vs LSM vs columns”
-*inside one store*. This chapter answers a prior question: **is this
-still one store?** Split first; then each domain may pick a type. Do
-not paste engine comparisons into a decomposition design, and do not
-treat “we chose Postgres” as proof the operational data is separable.
+An **architecture quantum** is the smallest piece that can be deployed, scaled, and restored on its own. It includes the running code and the data that code writes. A service is independently deployable only when its data can live and die with it. Two services that share a writable schema are one quantum, however many repositories were opened.
 
-## The mental model
+Choosing a data model (tables, documents, or graphs) and choosing how a single store lays bytes on disk (a B-tree, an LSM tree, or a column layout) are questions you ask *inside* one database. The question here is earlier: is this still one store? Split the operational data first. Each domain may then pick a product type. “We chose Postgres” is not evidence that the data can be separated, and a comparison of engine internals does not decide the cut.
+
+Forces that pull data apart are **disintegrators**. Forces that push it back together are **integrators**. Neither column wins by itself. You name both, then pick which pain you will pay. The same fight shows up in a ticketing system, in billing, in a catalog, or in identity. The book’s field-ops example is only a shared label for it.
 
 ```
   one operational database
@@ -31,373 +20,194 @@ treat “we chose Postgres” as proof the operational data is separable.
   +---------------------------------------------+
             |                         ^
    disintegrators                     integrators
-   (change, scale,                    (joins, ACID,
-    fault, security,                   “one engine”)
-    quantum, type fit)
+   (change, scale,                    (joins, atomic
+    fault, security,                   multi-table writes,
+    quantum, type fit)                 “one engine”)
             v                         |
   +----------+  +-----------+  +------------+
   │ tickets  │  │ customers │  │  billing   │
   │ (maybe a │  │ (maybe a  │  │ (maybe a   │
-  │  document│  │  relational   NewSQL)     │
+  │  document│  │  relational│  │  NewSQL)   │
   │   store) │  │   store)  │  │            │
   +----------+  +-----------+  +------------+
 ```
 
-The sentence to keep: **the database is part of the architecture
-quantum** — independently deployable only if its data can live and
-die with that service.
+**Polyglot persistence** means more than one operational store *type* in the estate, chosen because the domains differ. You earn that choice after a split. Buying a second database product while the tables still join in the same instance is a second brand, not a second life cycle.
 
-Two consequences. First, services that share a writeable schema are
-one quantum no matter how many repos you opened. Second, polyglot
-persistence is a *decision you earn after a split*, not a slogan you
-use to justify buying a second brand while the tables still join in
-the same instance.
+If the integrators dominate, stop. Putting services on top of one shared writable database is a distributed monolith with extra latency.
 
-## Data decomposition drivers
+## Forces that pull data apart
 
-Forces pull the data apart (**disintegrators**) or push it back
-together (**integrators**). You do not “win” one column. You name both
-and pick which pain you will pay. The book’s ticketing/field-ops case
-is just a shared example label; the fight is the same in billing,
-catalog, or identity.
+### Change control
 
-### Disintegrators
+Tables do not age together. Customer-profile columns crawl for months. Ticket-state columns churn hourly. One shared schema turns every change into one migration committee. A deploy of service A waits on a migration owned by team B, or both teams edit the same table in the same release train.
 
-**Change control.** Tables do not age together. Customer profile
-columns crawl; ticket state churns hourly. One schema means one
-migration committee.
+The mechanism is a schema each domain can migrate without asking the rest of the company. In a ticketing system, the team that changes ticket state ships that migration on its own clock. The team that changes customer profile does not sit in that review.
 
-**Problem** — A deploy of service A is blocked on a migration owned
-by team B, or worse, both teams edit the same table in the same
-release train.
-**Solution** — Give each domain a schema it can migrate without
-asking the rest of the company.
-**Failure mode** — You split services, leave the tables, and invent
-“please don’t `ALTER` on Friday” process. That is not decomposition;
-it is a calendar.
+What breaks is splitting the services and leaving the tables. The replacement process is “please do not `ALTER` on Friday.” That is a calendar. The data is still one quantum.
 
-**Connection management.** Every new service that opens a pool against
-the monolith DB spends a scarce resource (max connections, memory for
-sessions). You scale *callers* and starve the database.
+### Connection management
 
-**Problem** — Connection limits become the hidden scalability story.
-**Solution** — Each domain’s database has its own pool, sized to *that*
-workload.
-**Failure mode** — PgBouncer in front of the same instance. You delayed
-the split; you did not create independent life cycles.
+Every new service that opens a pool against the monolith database spends a scarce resource: the engine’s max connections, and the memory those sessions hold. You scale the callers and starve the database. Connection limits become the hidden scalability story.
 
-**Scalability.** Hot tables and cold tables sharing a buffer pool, a
-WAL, and a failover story cannot be scaled independently. Read replicas
-of the *whole* monolith are not “we scaled tickets.”
+Each domain’s database then has its own pool, sized to that workload. Ticket traffic no longer consumes the sessions billing needs.
 
-**Problem** — One domain’s traffic shape dictates hardware for all.
-**Solution** — Separate stores so you add capacity where the load is.
-**Failure mode** — Vertical scale forever, then a heroic read replica
-that still replicates the tables you did not need to copy.
+A connection pooler such as PgBouncer in front of the *same* instance delays the split. Callers share one life cycle: one restart, one parameter change, one pool that still points at every table.
 
-**Fault tolerance.** One crash, one restore, one corrupted catalog
-page — every service that stored facts there is down. Shared fate is
-the definition of one quantum.
+### Scalability
 
-**Problem** — Availability of “search tickets” is coupled to
-availability of “post invoices.”
-**Solution** — Failure domains that match service domains.
-**Failure mode** — Multi-AZ on the monolith. Good hygiene, still one
-blast radius for a bad migration.
+Hot tables and cold tables that share a buffer pool, a write-ahead log, and a failover story cannot be scaled independently. One domain’s traffic shape dictates hardware for all of them. A read replica of the whole monolith is not “we scaled tickets.” It is a second copy of customers, billing, and inventory as well.
 
-**Security and access.** PCI, payroll, or health rows sitting next to
-public catalog rows inherit the widest permission set someone needed
-this quarter.
+Separate stores let you add capacity where the load is. Tickets can grow disks and replicas without dragging the cold admin tables along.
 
-**Problem** — Least privilege is a GRANT spreadsheet across fifty
-services.
-**Solution** — Put sensitive tables behind a store and a network path
-only the owning service can reach.
-**Failure mode** — Row-level security as a substitute for ownership.
-Useful locally; it does not give you an independently deployable
-boundary.
+Scaling the monolith upward forever, then adding a heroic read replica, still copies the tables you did not need. The bottleneck moved; the coupling stayed.
 
-**Database type fit.** After a split, a domain might *want* a document
-store or a time-series engine. Before a split, “we also run Cassandra”
-usually means dual-writing the same facts — the worst of both worlds.
+### Fault tolerance
 
-**Problem** — One engine’s sweet spot is forced on every table.
-**Solution** — Split, *then* match type to the domain’s access path
-(later in this chapter).
-**Failure mode** — Polyglot *inside* the monolith: five products, one
-join-the-dots operational nightmare.
+One crash, one restore, or one corrupted catalog page takes down every service that stored facts there. Shared fate is what “one quantum” means in an outage. Availability of “search tickets” is coupled to availability of “post invoices.”
 
-### Integrators
+Failure domains should match service domains. A bad migration in billing should not be the outage story for ticket search.
 
-**Database transactions.** Inside one engine you get atomic
-multi-table updates for cheap. That comfort is
-[DDIA ch. 8](../../ddia/8-transactions/) — isolation, aborts, 2PC
-*inside a store*. It is an integrator *here* because the moment you
-split, you lose that comfort and you will meet
-[ch. 9](../9-data-ownership/) and [ch. 12](../12-transactional-sagas/).
+Running the monolith in multiple availability zones is good hygiene for that one database. It is still one blast radius for a bad migration. Both zones run the same schema.
 
-**Problem** — “Ticket open” and “inventory reserve” must not diverge.
-**Solution** — Keep those writes in **one** database until you have an
-explicit consistency story for the seam.
-**Failure mode** — Split anyway, then pretend HTTP is `COMMIT`.
+### Security and access
 
-**Data relationships.** Foreign keys and joins are not nostalgia.
-They are constraints the engine enforces so the application does not.
-Cross-domain FKs are the loudest integrator. After the split they
-become [distributed access](../10-distributed-data-access/).
+Rows that fall under card-data rules, payroll rules, or health rules sit next to public catalog rows. They inherit the widest permission set someone needed this quarter. Least privilege becomes a grant spreadsheet across fifty services.
 
-**Problem** — Almost every screen is a join.
-**Solution** — Put tables that are always joined for *writes* in the
-same domain. Read-time joins can move to ch. 10 patterns.
-**Failure mode** — “We’ll join in the API gateway.” You moved the
-query planner into a timeout.
+Sensitive tables belong behind a store and a network path only the owning service can reach. The catalog service has no route to the card table.
 
-**One database type (operational simplicity).** One backup tool, one
-on-call, one query language. That is a real integrator, especially
-for a small team. It argues for *collocated* but **separately owned**
-schemas before it argues for one shared schema.
+Row-level security inside the shared database is useful for one application. It does not give you an independently deployable boundary. The same engine, the same credentials plane, and the same backup still hold both kinds of rows.
 
-**Problem** — Five engines before you have five domains.
-**Solution** — Separate ownership first; stay on one product if the
-access patterns still fit.
-**Failure mode** — “Postgres for everything” used as a veto on
-*schema* splits. Collocation is not common ownership.
+### Database type fit
 
-Name the scores. If integrators dominate, stop. Extracting services
-onto a shared writable database is a distributed monolith with extra
-latency.
+After a split, a domain might want a document store or a time-series engine because that is how it is read and written. Before a split, “we also run Cassandra” usually means the same facts are written twice. That is the worst of both worlds: two products, one set of truths, and a join-the-dots operational nightmare inside the monolith.
 
-## Decomposing monolithic data: five steps
+One engine’s sweet spot is forced on every table until the data is separate. Split first, then match the product type to the domain’s access path. The menu is later in this note.
 
-Do not “dump the schema and hope.” The steps are ordered so you
-learn what will break *before* you cut the wire.
+## Forces that push data back together
+
+### Database transactions
+
+Inside one engine, a multi-table update is cheap: the engine commits every row or aborts every row. Isolation levels, aborts, and a two-phase commit *inside that one product* are how the engine keeps that promise. **Two-phase commit** asks each participant to prepare, then tells them all to commit or all to abort. Inside one database product that can be a sane internal mechanism. The moment two domains have two stores, that comfort is gone. An HTTP call is not a commit.
+
+Keep writes that must not diverge in one database until you have an explicit consistency story for the seam. “Ticket open” and “inventory reserve” are that kind of pair. If you split them, each side commits locally, and closing the gap becomes an application protocol: a single owner that both sides ask to write, or a saga. A **saga** is a multi-step business action in which each owner commits in its own database, and a later failure runs a compensating action instead of one `ROLLBACK`. There is a window where the world is half-updated.
+
+Splitting anyway, then pretending the HTTP handler is `COMMIT`, leaves that window with no compensation and no owner.
+
+### Data relationships
+
+Foreign keys and joins are constraints the engine enforces so the application does not have to. Cross-domain foreign keys are the loudest integrator. After the stores split, those constraints die, and a read that used to be one SQL join has to be replaced on purpose: call the owning service, copy a few columns, cache hot keys, or build a serving view whose product is the combination.
+
+Put tables that are always joined for *writes* in the same domain. A screen that only decorates a read can use one of those later access patterns. Almost every screen being a join is a reason to look at which joins are write-time invariants and which are decoration.
+
+“We’ll join in the API gateway” moves the query planner into a timeout. The gateway becomes the monolith.
+
+### One database type
+
+One backup tool, one on-call rotation, and one query language are a real integrator, especially for a small team. That argues for schemas that are separately owned and still collocated on one product. It does not argue for one shared schema that every service can write.
+
+Five engines before you have five domains multiplies operational work with nothing to show for independence. “Postgres for everything,” used as a veto on *schema* splits, makes the same mistake from the other side. Collocation is shared hardware and a shared product. Common ownership is every service writing the same tables. Those are different.
+
+Name the scores. If relationships and atomic multi-table writes dominate, do not extract services onto a shared writable database.
+
+## Five steps for cutting monolithic data
+
+Do not dump the schema and hope. The steps are ordered so you learn what will break before you cut the wire.
 
 ### 1. Analyze and create data domains
 
-**Problem** — The ER diagram is a hairball. Table names follow an
-old module, not the business.
-**Solution** — Group tables by **who changes them together** and
-**which invariants they protect**, not by prefix. A data domain is
-the data half of an architecture quantum: cohesive, independently
-life-cycled. Use the component domains from
-[ch. 5](../5-component-patterns/) as a starting map, then check the
-*data* — code seams and table seams often disagree.
-**Failure mode** — Domains named after teams (“platform,” “shared”)
-that collect orphan tables. That is a junk drawer with a SLA.
+The entity-relationship diagram is a hairball. Table names follow an old module, not the business. Group tables by who changes them together and which invariants they protect, not by prefix. A **data domain** is the data half of an architecture quantum: cohesive facts with one life cycle. Code components (intake, assignment, invoicing) are a starting map. Then check the tables. Code seams and table seams often disagree: two packages can look separate while every write still lands in one `tickets` table.
 
-Ask of every table: if this domain is down, which product capability
-is down? If the answer is “all of them,” you have not found a domain
-yet.
+Ask of every table: if this domain is down, which product capability is down? If the answer is “all of them,” you have not found a domain yet.
+
+Domains named after teams — “platform,” “shared” — that collect orphan tables are a junk drawer with a service-level agreement. Nobody can say which capability dies with them, because all of them do.
 
 ### 2. Assign tables to domains
 
-**Problem** — Junction tables, audit logs, and “status” codes that
-every domain reads.
-**Solution** — Each table gets **one** owning domain. Shared lookup
-lists are a later ownership problem ([ch. 9](../9-data-ownership/)),
-not an excuse to leave a communal schema. Duplicate a *code table*
-if the values are truly reference data and drift is cheap; do not
-duplicate a *balance*.
-**Failure mode** — “Assigned” on a wiki, still writable from three
-ORMs. Assignment is a connection and a permission, not a slide.
+Junction tables, audit logs, and status codes that every domain reads do not get to stay communal. Each table gets one owning domain. Shared lookup lists (country codes, reason codes) are an ownership decision you make on purpose: one reference-data owner, or a duplicated code table. Duplicate a code table when the values are truly reference data and drift is cheap. Do not duplicate a balance. A balance has one truth.
 
-When two domains both believe they own a table, you do not skip to
-step 5. You are in joint ownership; resolve it *as ownership* before
-you physically move files.
+“Assigned” on a wiki, while three ORMs can still write the table, is not an assignment. Assignment is a connection string and a permission.
+
+When two domains both believe they own a table, do not skip ahead to the physical move. That is **joint ownership**: two writers, one relation. Resolve who writes before you move files. The ways out are a table split, a new domain for the contested concept, one service delegating the write to the owner, or merging the services back. Those are ownership techniques, and they belong before the cutover.
 
 ### 3. Separate the connections
 
-**Problem** — Even with domains on paper, every service uses the same
-connection string and the same migration tool.
-**Solution** — One credential and one connection config per domain,
-**while the data still lives in one instance**. Service A can no
-longer `SELECT` service B’s tables. Broken queries surface here,
-cheaply.
-**Failure mode** — A “read-only user for everyone” so reporting keeps
-working. You just re-created the shared database with extra steps.
-Reporting belongs on a replica, a warehouse, or an explicit access
-pattern — not on prod credentials.
+Domains can exist on paper while every service still uses the same connection string and the same migration tool. Give each domain one credential and one connection config *while the data still lives in one instance*. Service A can no longer `SELECT` service B’s tables. Broken queries surface here, cheaply, before you have moved a byte.
 
-This step is the rehearsal. Treat violations as build-time or
-startup-time failures (fitness: no cross-domain table references in
-the ORM map).
+Treat a cross-domain table reference in the object-relational map as a build-time or startup-time failure. That check is a **fitness function**: an automated test that fails when a structural decision is violated. This one is the rehearsal.
+
+A “read-only user for everyone,” left in place so reporting keeps working, recreates the shared database with extra steps. Reporting belongs on a replica, a warehouse, or an explicit read pattern — a call, a copied projection, or a serving view — not on production credentials that can see every table.
 
 ### 4. Move the schemas
 
-**Problem** — Logical ownership exists; physical coupling remains
-(shared WAL, shared vacuum, shared restore).
-**Solution** — Move each domain to its own schema or database
-*on the same server* if you must, then to its own instance when
-the operational coupling still hurts. Migrations, backups, and
-parameter groups become per-domain.
-**Failure mode** — “We moved to another schema named `tickets`”
-and left `PUBLIC` synonyms so old joins keep compiling. The move
-did not happen.
+Logical ownership can exist while physical coupling remains: a shared write-ahead log, a shared vacuum, a shared restore. Move each domain to its own schema or its own database on the same server if you must. Move it to its own instance when that operational coupling still hurts. Migrations, backups, and parameter groups become per-domain.
 
-Plan the **cut of referential integrity**. Cross-schema FKs will
-die. Either they were a lie (the child can exist without the
-parent for a while — eventual consistency) or they were a reason
-to merge domains.
+“We moved to another schema named `tickets`” and left `PUBLIC` synonyms so the old joins keep compiling means the move did not happen. The SQL still reaches across.
+
+Plan the cut of referential integrity. Cross-schema foreign keys will die. Either the child can exist without the parent for a while — the two facts converge later, each owner committing locally — or the foreign key was a reason to merge the domains. Find out which before the synonym is the only thing holding the system together.
 
 ### 5. Switch over
 
-**Problem** — Dual-running, dual-writing, or a flag day with no
-rollback.
-**Solution** — Switch **writes** first for one domain, keep a
-temporary read path if you must, measure, then drop the old
-tables. Idempotent backfill. One domain at a time.
-**Failure mode** — Forever dual-write “until we’re sure.” You now
-have two sources of truth and a reconciliation job that is the
-real system. Dual-write is a migration tactic with an end date,
-not an architecture. (Derived-data dual-write is a different
-bug — [DDIA ch. 12](../../ddia/12-stream-processing/) /
-[ch. 13](../../ddia/13-streaming-philosophy/); do not merge that
-lecture into this cutover.)
+The dangerous cutovers are dual-running with no end, dual-writing with no end, or a flag day with no rollback. Switch **writes** first for one domain. Keep a temporary read path if you must. Measure. Then drop the old tables. Backfill in a way that can be run again without doubling the rows. One domain at a time.
 
-After switch-over, the join you used to write in SQL is gone.
-That is [ch. 10](../10-distributed-data-access/), not a reason to
-undo step 5 in a panic.
+Forever dual-write “until we’re sure” creates two sources of truth and a reconciliation job that is the real system. Dual-write here is a migration tactic with an end date, not an architecture.
 
-## Selecting a database type (after the split)
+A different bug wears the same name. Writing a fact to the operational table and, in a separate call, to a derived log or a search index, then treating both as sources of truth, is a crash window: one side committed, the other did not. That is a derived-data problem. Do not fold it into this cutover. This cutover ends when the old tables are gone and one domain is the writer.
 
-This is not a recap of LSM vs B-tree. Those are engine internals
-([DDIA ch. 4](../../ddia/4-storage-and-retrieval/)). The question
-here is: **now that this domain is a quantum, which *product type*
-matches how it is used?**
+After the switch, the join you used to write in SQL is gone. Replacing that read is a data-access decision (call the owner, copy columns, cache, or a serving view). It is not a reason to undo the switch in a panic.
 
-Pick from the access path, the relationship shape, and the
-operations story — not from a trend slide.
+A design review can use the steps as a checklist. Six services and one write database means you extracted processes, not quanta: the shared writable schema is still one quantum. A schema migration that requires a company meeting means an integrator (a relationship or a transaction) is unnamed, or step 1 has not been done. A connection-pool incident is evidence for step 3, not only a ticket to raise the proxy limit. A join that “has to stay” means that pair of tables is one domain, or you are volunteering for an explicit read pattern after the split.
+
+## Picking a database type after the split
+
+This is not a tour of how a B-tree differs from an LSM tree. Those are internals of one engine. The question here is: now that this domain is a quantum, which *product type* matches how it is used? Pick from the access path, the relationship shape, and the operations story. A trend slide is not an input.
 
 | Type | A domain that fits | A domain that does not |
 |---|---|---|
-| Relational | Invariants across several entities; ad hoc query; mature txns | A blob you always load as one document |
+| Relational | Invariants across several entities; ad hoc query; mature transactions | A blob you always load as one document |
 | Key-value | Session, cache-shaped facts, get/put by id | “List me everything that matches these seven filters” |
-| Document | One aggregate is the unit of load/save (work order, catalog item) | Heavy many-to-many you will fake with arrays forever |
+| Document | One aggregate is the unit of load and save (a work order, a catalog item) | Heavy many-to-many you will fake with arrays forever |
 | Column family | Wide, sparse, write-heavy rows keyed for a known access path | Multi-row transactions as the common path |
-| Graph | The *product question* is a path (“who can see this,” “related how”) | Point-get OLTP with an occasional friend list |
-| NewSQL | You still want SQL + txns, but one node is the ceiling | You needed a document model and bought SQL-by-another-name |
-| Cloud-native | Ops cost dominates; the managed limits match the access path | You need a feature the service will never grow (and cannot fork) |
-| Time-series | Metrics, sensors, append-by-time, retention is a first-class policy | Customer profiles that get updated in place |
+| Graph | The product question is a path (“who can see this,” “related how”) | Point lookups with an occasional friend list |
+| NewSQL | You still want SQL and transactions, but one node is the ceiling | You needed a document model and bought SQL under another name |
+| Cloud-native | Operations cost dominates; the managed limits match the access path | You need a feature the service will never grow, and you cannot fork it |
+| Time-series | Metrics, sensors, append-by-time; retention is a first-class policy | Customer profiles that get updated in place |
 
-**Relational** remains the default *inside* a domain that looks like
-an OLTP business: orders, ledgers, assignments with constraints.
-You are not required to flee SQL because you split.
+**Relational** remains the default inside a domain that looks like ordinary business transactions: orders, ledgers, assignments with constraints. Splitting services does not require you to leave SQL.
 
-**Key-value** fits when the domain’s API *is* the key. Feature flags,
-device sessions, idempotency records. The moment you need secondary
-indexes and ranges, you wanted a different type (or a relational
-table with a PK).
+**Key-value** fits when the domain’s API *is* the key. Feature flags, device sessions, and idempotency records are that shape. The moment you need secondary indexes and ranges, you wanted a different type, or a relational table with a primary key.
 
-**Document** fits when the ticket/work-order/content object is
-authored and read as a tree. Schema variation across records is a
-feature. Cross-aggregate invariants are not — those push you back
-toward relational or toward an explicit saga.
+**Document** fits when a ticket, a work order, or a content object is authored and read as a tree. Schema variation across records is a feature. Invariants that cross aggregates are not. Those push you back toward a relational store, or toward a saga if the aggregates already have different owners.
 
-**Column family** (wide-column) fits operational telemetry and
-sparse user-attribute rows where you designed the partition key
-on purpose. It is not “Cassandra because scale.” Wrong key, wrong
-life.
+**Column family** (a wide-column store) fits operational telemetry and sparse user-attribute rows when you designed the partition key on purpose. “Cassandra because scale” is not a design. The wrong key is the wrong life: every query that is not the key becomes a scatter across the cluster.
 
-**Graph** fits when traversal *is* the workload (entitlements,
-topology, recommendations as a product). Using a graph store as a
-generic app DB because “everything is related” recreates the
-monolith with worse reporting.
+**Graph** fits when traversal *is* the workload: entitlements, topology, recommendations as a product. Using a graph store as a generic application database because “everything is related” recreates the monolith with worse reporting. Point-get transactions with an occasional friend list do not need it.
 
-**NewSQL** (Cockroach, Spanner-style, TiDB, Yugabyte) is the type
-you pick when the *domain* is still relational and the *node* is
-the problem. It is not a way to keep a company-wide shared database
-without admitting it. Cross-domain NewSQL is still one quantum if
-everyone writes the same cluster with shared tables.
+**NewSQL** (CockroachDB, Spanner-style systems, TiDB, Yugabyte) is the type you pick when the *domain* is still relational and the *node* is the problem: you want SQL and transactions past a single machine. It is not a way to keep a company-wide shared database without admitting it. A NewSQL cluster that every domain writes, with shared tables, is still one quantum.
 
-**Cloud-native** (Aurora, Cosmos, DynamoDB-class, managed
-document/KV) is an *operations* type as much as a data model:
-failover, backups, and scaling are the product. Fit the domain to
-the *limits* (item size, transaction scope, query patterns) or you
-will invent a second store in six months.
+**Cloud-native** databases (Aurora, Cosmos DB, DynamoDB-class stores, managed document or key-value services) are an operations type as much as a data model. Failover, backups, and scaling are the product. Fit the domain to the limits — item size, transaction scope, query patterns — or you will invent a second store in six months because a feature you need will never appear and you cannot fork the service.
 
-**Time-series** is for observations indexed by time: metrics,
-IoT, traces. Retention, downsampling, and append-only are the
-design. Do not park ticket rows there because they have a
-`created_at`.
+**Time-series** stores are for observations indexed by time: metrics, sensors, traces. Retention, downsampling, and append-only writes are the design. Do not park ticket rows there because they have a `created_at`. Tickets are updated in place. Time-series engines are built to expire observations, not to be the system of record for a case file.
 
-**Problem** — The split is done, every domain still sits on the
-monolith engine “for now.”
-**Solution** — Re-evaluate type **per domain** against the table
-above. Staying relational is a valid outcome. Changing type is
-allowed because the quantum can migrate alone.
-**Failure mode** — Rewriting a domain into a trendy store to
-celebrate the split, then spending a year rebuilding joins and
-transactions the old engine gave you for free.
+After the split, every domain may still sit on the monolith engine “for now.” Re-evaluate type per domain against the table. Staying relational is a valid outcome. Changing type is allowed because that quantum can migrate alone. Rewriting a domain into a trendy store to celebrate the split, then spending a year rebuilding joins and transactions the old engine gave you, is the failure. The type has to match the access path you already have.
+
+A request for a new engine has a prior question: is the domain already split, or is this a second copy of the same facts?
 
 ## Polyglot databases as a decision
 
-Polyglot persistence means **more than one operational store
-type in the estate**, chosen because domains differ. It is not
-“we use Redis, therefore we are distributed.”
+A single engine is a poor fit once two domains are already split and measurably different — graph-shaped entitlements next to a ledger, for example. Introduce a second type where the mismatch is measurable: query pain, write shape, retention, or isolation needs. Write the operations cost into the decision: backup, replay, on-call, and the skill to run it. An architecture decision record is the short note of that context, the choice, and the consequence. The cost belongs there, not in a slide.
 
-**Problem** — A single engine is a poor fit for two domains you
-already split (e.g. graph-shaped entitlements next to a ledger).
-**Solution** — Introduce a second type where the *mismatch is
-measurable*: query pain, write shape, retention, or isolation
-needs. Budget the ops cost (backup, replay, on-call, skill)
-explicitly in the ADR.
-**Failure mode** — A new database per team as a status symbol.
-You multiplied failure modes without multiplying independence —
-especially if they still dual-write to the old tables.
+A new database per team, adopted as a status symbol, multiplies failure modes without multiplying independence. The multiplication is worse when the new store still dual-writes to the old tables. You have two places that claim to be the truth, and neither deploy is independent.
 
-A responsible polyglot checklist:
+Four checks have to be true before a second type is earned:
 
-1. The domain already has **separate connections and ownership**.
-2. The type matches the **dominant access path**, not a side
-   feature.
-3. You know how other domains will **read** these facts
-   ([ch. 10](../10-distributed-data-access/)).
-4. You accepted that **cross-store transactions** are an
-   application protocol ([ch. 9](../9-data-ownership/)), not
-   `BEGIN`.
+1. The domain already has separate connections and a single writer. Ownership is the write credential and the migration repository, not a name on a diagram.
+2. The type matches the dominant access path, not a side feature.
+3. You know how other domains will read these facts: a call to the owner, a narrow column copy, a cache with a stated freshness, or a serving view. “They will query our tables” is the shared database again.
+4. You have accepted that a transaction across stores is an application protocol, not `BEGIN`. Each store commits locally. The pair converges by a background job, by a request that calls both owners and can compensate, or by an event the second owner consumes.
 
-If those four are not true, collocate on one product with
-**separate databases**. That is already a win over the monolith
-schema. Polyglot can wait.
+If those four are not true, collocate on one product with **separate databases**. That is already a win over one monolith schema. Polyglot can wait. “We use Redis, therefore we are distributed” fails the definition: a cache beside a shared operational schema is not a second domain store.
 
-## How this shows up when you design something
+## Recap
 
-- “We extracted six services.” How many **write** databases?
-  If the answer is one, you extracted processes, not quanta.
-- Schema migration as a company meeting: name the integrator
-  (relationships, txns) or start step 1.
-- New engine request: is the domain split already, or is this
-  a second copy of the same facts?
-- Connection pool incidents: treat them as evidence for step 3,
-  not only as a proxy config ticket.
-- A join that “has to stay”: that pair of tables is one domain,
-  or you are volunteering for ch. 10.
-
-## Check yourself
-
-1. A team lists six microservices and one `DATABASE_URL`. Which
-   step of the five have they not done, and what failure mode
-   are they in? Give a production example.
-2. Change control vs connection limits: both are disintegrators.
-   How would you tell which one is *hurting you this quarter*?
-3. Why is “we run Postgres in Multi-AZ” not an answer to fault
-   isolation *between domains*?
-4. Foreign keys across what will become two domains: integrator
-   or unfinished assignment? What do you do in step 4 when they
-   break?
-5. Pick a type for a domain whose API is always `GET /session/:id`
-   and `PUT` of an opaque blob. Which type is a mismatch, and
-   why is that not a DDIA storage-engine question?
-6. When is NewSQL the right *domain* choice, and when is it a
-   way to postpone splitting tables?
-7. Write the four-point polyglot checklist from memory. Which
-   point, if skipped, turns polyglot into dual-write?
-8. Step 3 (separate connections) while data still shares an
-   instance: what bug are you trying to find *before* step 5?
-9. A reporting user needs a join across two future domains.
-   Why is “leave a shared read credential” a failure mode, and
-   what belongs in ch. 10 or the analytical track instead?
-10. In one sentence: DDIA 3/4 vs this chapter — engine vs split.
-    Then name a design review comment that illegally merges them.
-
-Continue to [Service granularity](../7-service-granularity/).
+The shared operational database is one quantum: one transaction, one pool, one outage. Disintegrators (change rate, connections, scale, fault, security, type fit) pull domains apart. Integrators (atomic multi-table writes, foreign keys, one engine’s operational simplicity) push them together. Five steps cut the knot in order: name data domains, assign each table to one owner, separate credentials while the bytes still share an instance, move schemas, then switch writes one domain at a time and end the dual-write. After that, pick a product type from the access path. A second database type waits until ownership, the dominant access path, the read pattern, and the cross-store protocol are already real.
